@@ -101,7 +101,7 @@ class FeishuNotifier:
         now_cst = datetime.now(CST).strftime("%Y-%m-%d %H:%M")
 
         lines = [
-            f"📊 整点汇报 {now_cst}",
+            f"📊 定时汇报 {now_cst}",
             "━━━━━━━━━━━━━━━━━━━━",
             f"💰 余额: ${balance_usdc:.2f} USDC  |  {balance_eth:.5f} ETH",
         ]

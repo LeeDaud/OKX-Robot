@@ -183,12 +183,16 @@ async def run(dry_run_override: bool | None = None) -> None:
                     logger.warning("Config reload failed: %s", e)
 
         async def hourly_reporter() -> None:
+            # 每天 09:00 和 21:00 UTC+8（即 01:00 和 13:00 UTC）各汇报一次
+            report_hours_utc = [1, 13]
             while True:
                 now = datetime.now(timezone.utc)
-                # 等到下一个整点
-                seconds_until = (60 - now.minute) * 60 - now.second
-                if seconds_until <= 0:
-                    seconds_until += 3600
+                current_minutes = now.hour * 60 + now.minute
+                next_minutes = min(
+                    (h * 60 - current_minutes) % (24 * 60) or 24 * 60
+                    for h in report_hours_utc
+                )
+                seconds_until = next_minutes * 60 - now.second
                 await asyncio.sleep(seconds_until)
                 try:
                     from src.executor.trader import ERC20_BALANCE_ABI

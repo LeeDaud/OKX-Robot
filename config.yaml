@@ -1,0 +1,36 @@
+# 跟单目标地址列表（每个地址可独立覆盖全局跟单金额配置）
+copy_targets:
+  - address: "0xe56761c7681aa5cb414b57ba8d23577d30cdf466"
+    # trade_mode: fixed     # 不填则继承全局
+    # trade_fixed_usd: 30
+    # trade_max_usd: 100
+
+# 过滤规则
+token_whitelist: []          # 只跟单白名单内的 token（空列表 = 不限制）
+min_trade_usd: 0             # 被跟单地址交易额低于此值时跳过（0 = 不限制，单位 USDC）
+
+# 跟单金额
+trade_mode: ratio          # ratio | fixed
+trade_ratio: 0.50          # ratio 模式：空闲 USDC 余额的百分比
+trade_fixed_usd: 50        # fixed 模式：每笔固定金额（USDC）
+trade_max_usd: 100         # 单笔上限（两种模式都生效，0 = 不限）
+
+# 风控
+daily_loss_limit_usd: 10   # 每日最大亏损（USDC），超过后停止跟单
+slippage: 0.01             # 最大滑点 1%
+gas_limit_gwei: 50         # gas price 超过此值时跳过（单位 gwei）
+
+# 止盈
+take_profit_roi: 0.30      # 止盈收益率阈值（0.30 = 30%），0 = 不启用
+take_profit_check_sec: 60  # 止盈轮询间隔（秒）
+
+# 运行模式
+dry_run: true              # true = 只打印，不发链上交易
+
+# 通知
+feishu_webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/28a14ab0-82ff-4404-a7ba-f414ada4e659"       # 飞书群机器人 Webhook URL，留空则不通知
+daily_report_hour_utc: 11  # 每日汇报时间（UTC 小时，16 = 北京时间 0 点）
+
+# 监控
+poll_interval_sec: 60        # confirmed tx 轮询间隔（秒）
+

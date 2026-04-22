@@ -1,0 +1,18 @@
+[Unit]
+Description=OKX Copy Trading Robot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/okx-robot
+EnvironmentFile=/opt/okx-robot/.env
+ExecStart=/opt/okx-robot/.venv/bin/python -m src.main
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

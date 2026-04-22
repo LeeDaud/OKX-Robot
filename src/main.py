@@ -8,6 +8,7 @@
 import asyncio
 import argparse
 import logging
+from pathlib import Path
 import signal
 import sys
 import uuid
@@ -15,7 +16,7 @@ from datetime import datetime, timezone
 
 from web3 import AsyncWeb3
 
-from src.config.loader import load_config, reload_yaml, TargetConfig
+from src.config.loader import load_config, reload_yaml, TargetConfig, Config
 from src.db.database import (
     init_db, insert_trade, update_trade,
     get_today_pnl, get_today_stats, get_all_stats,
@@ -31,17 +32,102 @@ from src.notify.feishu import FeishuNotifier
 from src.risk.guard import DailyLossGuard
 from src.risk.take_profit import TakeProfitMonitor
 
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("logs/bot.log"),
+        logging.FileHandler(LOG_DIR / "bot.log", encoding="utf-8"),
     ],
 )
 logger = logging.getLogger("main")
 
 STABLE_TOKENS = {USDC_BASE.lower(), USDT_BASE.lower()}
+
+
+def validate_runtime_config(cfg: Config) -> list[str]:
+    issues: list[str] = []
+
+    if not cfg.copy_targets:
+        issues.append("copy_targets must contain at least one address")
+    if cfg.trade_mode not in {"ratio", "fixed"}:
+        issues.append(f"trade_mode must be 'ratio' or 'fixed', got '{cfg.trade_mode}'")
+    if cfg.trade_ratio < 0:
+        issues.append("trade_ratio must be >= 0")
+    if cfg.trade_fixed_usd < 0:
+        issues.append("trade_fixed_usd must be >= 0")
+    if cfg.trade_max_usd < 0:
+        issues.append("trade_max_usd must be >= 0")
+    if cfg.min_trade_usd < 0:
+        issues.append("min_trade_usd must be >= 0")
+    if cfg.daily_loss_limit_usd < 0:
+        issues.append("daily_loss_limit_usd must be >= 0")
+    if not 0 <= cfg.slippage <= 1:
+        issues.append("slippage must be between 0 and 1")
+    if cfg.gas_limit_gwei < 0:
+        issues.append("gas_limit_gwei must be >= 0")
+    if cfg.take_profit_roi < 0:
+        issues.append("take_profit_roi must be >= 0")
+    if cfg.take_profit_check_sec <= 0:
+        issues.append("take_profit_check_sec must be > 0")
+    if not 0 <= cfg.daily_report_hour_utc <= 23:
+        issues.append("daily_report_hour_utc must be between 0 and 23")
+    if cfg.poll_interval_sec <= 0:
+        issues.append("poll_interval_sec must be > 0")
+
+    required_values = {
+        "rpc_ws_url": cfg.rpc_ws_url,
+        "rpc_http_url": cfg.rpc_http_url,
+        "private_key": cfg.private_key,
+        "wallet_address": cfg.wallet_address,
+        "okx_api_key": cfg.okx_api_key,
+        "okx_secret_key": cfg.okx_secret_key,
+        "okx_passphrase": cfg.okx_passphrase,
+    }
+    for name, value in required_values.items():
+        if not str(value).strip():
+            issues.append(f"{name} must not be empty")
+
+    seen_addresses: set[str] = set()
+    for idx, target in enumerate(cfg.copy_targets, start=1):
+        if not target.address:
+            issues.append(f"copy_targets[{idx}] address must not be empty")
+            continue
+        if target.address in seen_addresses:
+            issues.append(f"copy_targets contains duplicate address: {target.address}")
+        seen_addresses.add(target.address)
+        if target.trade_mode is not None and target.trade_mode not in {"ratio", "fixed"}:
+            issues.append(
+                f"copy_targets[{idx}] trade_mode must be 'ratio' or 'fixed', got '{target.trade_mode}'"
+            )
+
+    return issues
+
+
+def check_config() -> None:
+    cfg = load_config()
+    issues = validate_runtime_config(cfg)
+    if issues:
+        for issue in issues:
+            logger.error("Config check failed: %s", issue)
+        raise SystemExit(1)
+
+    logger.info(
+        "Config check passed | dry_run=%s | targets=%d | trade_mode=%s | poll_interval=%.1fs",
+        cfg.dry_run,
+        len(cfg.copy_targets),
+        cfg.trade_mode,
+        cfg.poll_interval_sec,
+    )
+    for target in cfg.copy_targets:
+        logger.info(
+            "Target loaded | address=%s | mode=%s",
+            target.address,
+            target.trade_mode or cfg.trade_mode,
+        )
 
 
 def _is_sell(token_out: str) -> bool:
@@ -298,7 +384,12 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--dry-run", action="store_true", help="强制 dry-run 模式")
     group.add_argument("--live", action="store_true", help="强制 live 模式")
+    parser.add_argument("--check-config", action="store_true", help="validate .env and config.yaml only")
     args = parser.parse_args()
+
+    if args.check_config:
+        check_config()
+        return
 
     override = None
     if args.dry_run:

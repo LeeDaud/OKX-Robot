@@ -63,13 +63,13 @@ dry_run: true            # 先用 dry-run 测试
 
 ```bash
 # Dry-run 模式（默认，不发链上交易）
-python src/main.py
+python -m src.main
 
 # 强制 dry-run
-python src/main.py --dry-run
+python -m src.main --dry-run
 
 # 实盘模式
-python src/main.py --live
+python -m src.main --live
 ```
 
 ## 目录结构

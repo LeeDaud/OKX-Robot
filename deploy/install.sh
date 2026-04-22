@@ -1,28 +1,56 @@
 #!/usr/bin/env bash
-# 服务器端一键部署脚本（首次部署）
 set -euo pipefail
 
 DEPLOY_DIR=/opt/okx-robot
+SERVICE_NAME=okx-robot
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+PYTHON_BIN="${DEPLOY_DIR}/.venv/bin/python"
 
-echo "=== [1/5] 创建目录 ==="
-mkdir -p "$DEPLOY_DIR/logs"
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "Please run as root."
+  exit 1
+fi
 
-echo "=== [2/5] 安装 Python 依赖 ==="
 cd "$DEPLOY_DIR"
-python3 -m venv .venv
-.venv/bin/pip install --upgrade pip -q
-.venv/bin/pip install -r requirements.txt -q
 
-echo "=== [3/5] 安装 systemd 服务 ==="
-cp deploy/okx-robot.service /etc/systemd/system/okx-robot.service
+if [[ ! -f requirements.txt ]]; then
+  echo "requirements.txt not found in ${DEPLOY_DIR}"
+  exit 1
+fi
+
+if [[ ! -f config.yaml ]]; then
+  echo "config.yaml not found in ${DEPLOY_DIR}"
+  exit 1
+fi
+
+if [[ ! -f .env ]]; then
+  echo ".env not found in ${DEPLOY_DIR}"
+  exit 1
+fi
+
+echo "=== [1/6] Prepare runtime directories ==="
+mkdir -p "${DEPLOY_DIR}/logs"
+
+echo "=== [2/6] Create or refresh virtualenv ==="
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  python3 -m venv "${DEPLOY_DIR}/.venv"
+fi
+"$PYTHON_BIN" -m pip install --upgrade pip -q
+"$PYTHON_BIN" -m pip install -r requirements.txt -q
+
+echo "=== [3/6] Validate local config ==="
+"$PYTHON_BIN" -m src.main --check-config
+
+echo "=== [4/6] Install systemd service ==="
+install -m 0644 deploy/okx-robot.service "$SERVICE_FILE"
 systemctl daemon-reload
-systemctl enable okx-robot
+systemctl enable "$SERVICE_NAME" >/dev/null
 
-echo "=== [4/5] 启动服务 ==="
-systemctl restart okx-robot
+echo "=== [5/6] Restart service ==="
+systemctl restart "$SERVICE_NAME"
 sleep 3
 
-echo "=== [5/5] 验证 ==="
-systemctl status okx-robot --no-pager
-echo ""
-echo "日志: journalctl -u okx-robot -f"
+echo "=== [6/6] Verify service status ==="
+systemctl status "$SERVICE_NAME" --no-pager
+echo
+echo "Logs: journalctl -u ${SERVICE_NAME} -f"

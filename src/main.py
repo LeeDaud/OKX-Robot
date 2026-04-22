@@ -183,8 +183,8 @@ async def run(dry_run_override: bool | None = None) -> None:
                     logger.warning("Config reload failed: %s", e)
 
         async def hourly_reporter() -> None:
-            # 每天 09:00 和 21:00 UTC+8（即 01:00 和 13:00 UTC）各汇报一次
-            report_hours_utc = [1, 13]
+            # 每天 09:00/12:00/15:00/18:00/21:00 CST（即 UTC 01/04/07/10/13）各汇报一次
+            report_hours_utc = [1, 4, 7, 10, 13]
             while True:
                 now = datetime.now(timezone.utc)
                 current_minutes = now.hour * 60 + now.minute
@@ -244,7 +244,9 @@ async def run(dry_run_override: bool | None = None) -> None:
             while True:
                 now = datetime.now(timezone.utc)
                 target_hour = cfg.daily_report_hour_utc
-                seconds_until = ((target_hour - now.hour - 1) % 24) * 3600 + (60 - now.minute) * 60 + (60 - now.second)
+                seconds_until = ((target_hour - now.hour) % 24) * 3600 - now.minute * 60 - now.second
+                if seconds_until <= 0:
+                    seconds_until += 24 * 3600
                 await asyncio.sleep(seconds_until)
                 try:
                     stats = await get_today_stats()

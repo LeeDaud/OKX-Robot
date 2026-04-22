@@ -4,7 +4,8 @@
       "Bash(python *)",
       "Bash(.venv/Scripts/python *)",
       "Bash(git add *)",
-      "Bash(git commit -m 'Initial commit: OKX copy trading bot *)"
+      "Bash(git commit -m 'Initial commit: OKX copy trading bot *)",
+      "Bash(ssh *)"
     ]
   }
 }

@@ -7,7 +7,7 @@ from web3 import AsyncWeb3
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 3.0  # seconds before switching to fallback
+_TIMEOUT = 5.0  # seconds before switching to fallback
 
 
 class _EthProxy:

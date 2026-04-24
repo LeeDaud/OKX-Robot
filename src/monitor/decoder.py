@@ -22,11 +22,16 @@ KNOWN_ROUTERS = {
     "0x2626664c2603336e57b271c5c0b26f421741e481",  # Uniswap V3 SwapRouter02
     "0x198ef79f1f515f02dfe9e3115ed9fc07183f02fc",  # Aerodrome Router
     "0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43",  # OKX DEX Router (Base)
+    "0xa31bd6a0edbc4da307b8fa92bd6cf39e0fae262c",  # Virtuals Protocol Router
+    "0xf66dea7b3e897cd44a5a231c61b6b4423d613259",  # Virtuals Protocol Router v2
+    "0x8292b43ab73efac11faf357419c38acf448202c5",  # Virtuals Protocol Router v3
 }
 
 WETH_BASE = "0x4200000000000000000000000000000000000006"
 USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 USDT_BASE = "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2"
+
+TRANSFER_TOPIC = Web3.keccak(text="Transfer(address,address,uint256)").hex()
 
 
 @dataclass
@@ -52,13 +57,12 @@ def decode_swap_from_logs(
     logs: list[LogReceipt],
     block_number: int,
 ) -> Optional[SwapInfo]:
-    """从交易 receipt logs 中提取 swap 信息。优先解析 V3，回退到 V2。"""
+    """从交易 receipt logs 中提取 swap 信息。优先解析 V3，回退到 V2，最后用 Transfer 兜底。"""
     for log in logs:
         topics = log.get("topics", [])
         if not topics:
             continue
         raw = topics[0]
-        # HexBytes.hex() 和 str 都可能不带 0x，统一去掉前缀比较
         topic0 = (raw.hex() if isinstance(raw, bytes) else raw).lstrip("0x").lower()
         v3 = UNISWAP_V3_SWAP_TOPIC.lstrip("0x").lower()
         v2 = UNISWAP_V2_SWAP_TOPIC.lstrip("0x").lower()
@@ -67,7 +71,8 @@ def decode_swap_from_logs(
             return _decode_v3_swap(tx_hash, from_addr, log, block_number)
         if topic0 == v2:
             return _decode_v2_swap(tx_hash, from_addr, log, block_number)
-    return None
+
+    return _decode_swap_from_transfers(tx_hash, from_addr, logs, block_number)
 
 
 def _decode_v3_swap(
@@ -146,3 +151,70 @@ def _decode_v2_swap(
         )
     except Exception:
         return None
+
+
+def _decode_swap_from_transfers(
+    tx_hash: str,
+    from_addr: str,
+    logs: list[LogReceipt],
+    block_number: int,
+) -> Optional[SwapInfo]:
+    """
+    Transfer 事件兜底解析，用于 Virtuals 等不发标准 Swap 事件的 DEX。
+    找 from_addr 转出的最大 Transfer 作为 token_in，转入 from_addr 的 Transfer 作为 token_out。
+    """
+    transfer_topic = TRANSFER_TOPIC.lstrip("0x").lower()
+    transfers_out: list[tuple[str, int]] = []
+    transfers_in: list[tuple[str, int]] = []
+
+    for log in logs:
+        topics = log.get("topics", [])
+        if len(topics) < 3:
+            continue
+        raw = topics[0]
+        topic0 = (raw.hex() if isinstance(raw, bytes) else raw).lstrip("0x").lower()
+        if topic0 != transfer_topic:
+            continue
+
+        def _addr(topic) -> str:
+            raw = topic.hex() if isinstance(topic, bytes) else topic
+            return "0x" + raw.lstrip("0x")[-40:].lower()
+
+        from_ = _addr(topics[1])
+        to_ = _addr(topics[2])
+
+        data = log.get("data", b"")
+        if isinstance(data, bytes):
+            data_bytes = data
+        else:
+            data_bytes = bytes.fromhex(data[2:] if data.startswith("0x") else data)
+        if len(data_bytes) < 32:
+            continue
+        amount = int.from_bytes(data_bytes[:32], "big")
+        token = log["address"].lower()
+
+        if from_ == from_addr.lower():
+            transfers_out.append((token, amount))
+        if to_ == from_addr.lower():
+            transfers_in.append((token, amount))
+
+    if not transfers_out or not transfers_in:
+        return None
+
+    # 取转出最大的作为 token_in（排除 fee 小额转出）
+    token_in, amount_in = max(transfers_out, key=lambda x: x[1])
+    # 取转入最大的作为 token_out
+    token_out, amount_out = max(transfers_in, key=lambda x: x[1])
+
+    if token_in == token_out:
+        return None
+
+    return SwapInfo(
+        tx_hash=tx_hash,
+        from_addr=from_addr,
+        token_in=token_in,
+        token_out=token_out,
+        amount_in=amount_in,
+        amount_out=amount_out,
+        block_number=block_number,
+    )

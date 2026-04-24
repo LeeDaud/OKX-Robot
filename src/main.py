@@ -291,7 +291,9 @@ async def run(dry_run_override: bool | None = None) -> None:
                     (h * 3600 - now_total_sec) % (24 * 3600) or 24 * 3600
                     for h in report_hours_utc
                 )
+                logger.info("Hourly reporter: next report in %d seconds (%.1f min)", seconds_until, seconds_until / 60)
                 await asyncio.sleep(seconds_until)
+                logger.info("Hourly reporter: woke up, generating report...")
                 try:
                     fire_hour = datetime.now(timezone.utc).hour
                     contract = w3.eth.contract(

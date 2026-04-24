@@ -1,7 +1,9 @@
 """
-监控目标地址的链上交易（confirmed tx 轮询模式）。
-每隔 poll_interval_sec 秒查询目标地址最新区块的交易，
+监控目标地址的链上交易（eth_getLogs Transfer 轮询模式）。
+每隔 poll_interval_sec 秒用 eth_getLogs 查目标地址发出的 Transfer 事件，
 发现新 swap 后通过回调通知执行层。
+
+相比扫块方案，每次轮询只需 1 个 RPC 请求，消耗降低约 30 倍。
 """
 import asyncio
 import logging
@@ -9,7 +11,7 @@ from typing import Callable, Awaitable, List
 
 from web3 import AsyncWeb3
 
-from src.monitor.decoder import decode_swap_from_logs, is_swap_tx, SwapInfo
+from src.monitor.decoder import decode_swap_from_logs, SwapInfo, TRANSFER_TOPIC
 from src.monitor.filter import TxFilter, SwapFilter
 
 logger = logging.getLogger(__name__)
@@ -22,10 +24,10 @@ class AddressWatcher:
         targets: List[str],
         on_swap: Callable[[SwapInfo], Awaitable[None]],
         swap_filter: SwapFilter,
-        poll_interval: float = 2.0,
+        poll_interval: float = 60.0,
     ) -> None:
         self._w3 = w3
-        self._targets = {addr.lower() for addr in targets}
+        self._targets = [addr.lower() for addr in targets]
         self._on_swap = on_swap
         self._swap_filter = swap_filter
         self._poll_interval = poll_interval
@@ -53,46 +55,47 @@ class AddressWatcher:
         if current_block <= self._last_block:
             return
 
-        for block_num in range(self._last_block + 1, current_block + 1):
+        # 用 eth_getLogs 查目标地址发出的 Transfer 事件
+        # topic[1] = from address（左填充 32 字节）
+        tx_hashes: set[str] = set()
+        for addr in self._targets:
+            padded = "0x" + "0" * 24 + addr[2:]
             try:
-                await self._process_block(block_num)
+                logs = await self._w3.eth.get_logs({
+                    "fromBlock": self._last_block + 1,
+                    "toBlock": current_block,
+                    "topics": [TRANSFER_TOPIC, padded],
+                })
+                for log in logs:
+                    tx_hashes.add(log["transactionHash"].hex())
             except Exception as e:
-                logger.warning("Failed to process block %d: %s", block_num, e)
-            await asyncio.sleep(0.1)
+                logger.warning("get_logs failed for %s: %s", addr, e)
 
         self._last_block = current_block
 
-    async def _process_block(self, block_number: int) -> None:
-        block = await self._w3.eth.get_block(block_number, full_transactions=True)
-        for tx in block.get("transactions", []):
-            from_addr = tx.get("from", "").lower()
-            if from_addr not in self._targets:
-                continue
-
-            tx_hash = tx["hash"].hex()
+        for tx_hash in tx_hashes:
             if not self._filter.is_new(tx_hash):
                 continue
+            await self._resolve_swap(tx_hash)
 
-            to_addr = (tx.get("to") or "").lower()
-            if is_swap_tx(tx):
-                logger.info("Target tx (known router): %s -> %s", tx_hash[:10], to_addr)
-            else:
-                logger.info("Target tx (unknown router, checking logs): %s -> %s", tx_hash[:10], to_addr)
-
-            await self._resolve_swap(tx_hash, from_addr, block_number)
-
-    async def _resolve_swap(
-        self, tx_hash: str, from_addr: str, block_number: int
-    ) -> None:
+    async def _resolve_swap(self, tx_hash: str) -> None:
         try:
             receipt = await self._w3.eth.get_transaction_receipt(tx_hash)
             if receipt is None or receipt["status"] != 1:
                 return
 
+            from_addr = receipt["from"].lower()
+            if from_addr not in self._targets:
+                return
+
+            block_number = receipt["blockNumber"]
             logs = [dict(log) for log in receipt.get("logs", [])]
+
+            logger.info("Target tx: %s from %s", tx_hash[:10], from_addr[:10])
+
             swap = decode_swap_from_logs(tx_hash, from_addr, logs, block_number)
             if swap is None:
-                logger.info("[SKIP] %s: no V2/V3 swap event in logs (%d logs total)", tx_hash[:10], len(logs))
+                logger.info("[SKIP] %s: no swap detected in logs (%d logs)", tx_hash[:10], len(logs))
                 return
 
             swap = await self._resolve_pool_tokens(swap)

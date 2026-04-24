@@ -99,7 +99,11 @@ class OKXDexClient:
                 if data.get("code") != "0":
                     logger.warning("OKX API error: %s", data.get("msg"))
                     return None
-                return data.get("data", [{}])[0]
+                items = data.get("data") or []
+                if not items:
+                    logger.warning("OKX API returned empty data for %s", path)
+                    return None
+                return items[0]
         except Exception as e:
             logger.error("OKX API request failed: %s", e)
             return None

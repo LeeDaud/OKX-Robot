@@ -75,9 +75,7 @@ class TakeProfitMonitor:
         # 找对应的 trader（用 source_addr 匹配）
         trader = self._traders.get(pos["source_addr"])
         if trader is None:
-            # 用任意一个 trader 执行
-            trader = next(iter(self._traders.values()), None)
-        if trader is None:
+            logger.warning("No trader for source_addr=%s, skipping take profit", pos.get("source_addr"))
             return
 
         tx = await trader.sell(token, USDC_BASE, int(amount_out))

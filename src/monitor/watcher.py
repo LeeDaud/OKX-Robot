@@ -55,6 +55,7 @@ class AddressWatcher:
 
         for block_num in range(self._last_block + 1, current_block + 1):
             await self._process_block(block_num)
+            await asyncio.sleep(0.1)
 
         self._last_block = current_block
 
@@ -69,10 +70,12 @@ class AddressWatcher:
             if not self._filter.is_new(tx_hash):
                 continue
 
-            if not is_swap_tx(tx):
-                continue
+            to_addr = (tx.get("to") or "").lower()
+            if is_swap_tx(tx):
+                logger.info("Target tx (known router): %s -> %s", tx_hash[:10], to_addr)
+            else:
+                logger.info("Target tx (unknown router, checking logs): %s -> %s", tx_hash[:10], to_addr)
 
-            logger.debug("Detected tx from target: %s", tx_hash)
             await self._resolve_swap(tx_hash, from_addr, block_number)
 
     async def _resolve_swap(

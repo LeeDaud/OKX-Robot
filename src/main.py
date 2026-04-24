@@ -23,7 +23,7 @@ from src.db.database import (
     get_open_positions, get_open_position_by_token, close_position,
 )
 from src.executor.okx_client import OKXDexClient
-from src.executor.trader import Trader
+from src.executor.trader import Trader, ERC20_BALANCE_ABI
 from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE
 from src.monitor.filter import SwapFilter
 from src.monitor.token_resolver import TokenResolver
@@ -180,6 +180,7 @@ async def run(dry_run_override: bool | None = None) -> None:
             position_id = None
             entry_price = 0.0
             amount_out = 0.0
+            exit_usd = 0.0
             roi_pct = None
             pnl_usd = None
 
@@ -196,15 +197,15 @@ async def run(dry_run_override: bool | None = None) -> None:
                 if open_pos:
                     position_id = open_pos["position_id"]
                     cost_usd = open_pos["amount_in"] / 1e6
-                    exit_usd = swap.amount_in / 1e6  # 卖出时 token_in 是代币，amount_in 是代币数量
+                    exit_usd = 0.0
                     # 查出场价值
                     quote = await okx.get_quote(swap.token_in, USDC_BASE, swap.amount_in)
                     if quote:
                         exit_usd = float(quote.get("toTokenAmount", 0)) / 1e6
-                    pnl_usd = exit_usd - cost_usd
-                    roi_pct = (pnl_usd / cost_usd * 100) if cost_usd > 0 else 0
-                    exit_price = exit_usd / swap.amount_in if swap.amount_in > 0 else 0
-                    await close_position(position_id, exit_price, roi_pct, pnl_usd)
+                    if exit_usd > 0:
+                        pnl_usd = exit_usd - cost_usd
+                        roi_pct = (pnl_usd / cost_usd * 100) if cost_usd > 0 else 0
+                        await close_position(position_id, exit_usd, roi_pct, pnl_usd)
 
             await insert_trade(
                 swap.tx_hash, swap.from_addr,
@@ -213,31 +214,41 @@ async def run(dry_run_override: bool | None = None) -> None:
                 entry_price=entry_price, amount_out=amount_out,
             )
 
-            trader = traders.get(swap.from_addr)
-            if trader is None:
-                return
+            amount_usd = exit_usd if side == "sell" and exit_usd else swap.amount_in / 1e6
+            symbol_in, symbol_out = await asyncio.gather(
+                token_resolver.symbol(swap.token_in),
+                token_resolver.symbol(swap.token_out),
+            )
 
-            our_tx = await trader.execute(swap)
+            trader = traders.get(swap.from_addr)
+            our_tx = await trader.execute(swap) if trader else None
             status = "success" if our_tx else ("dry_run" if cfg.dry_run else "failed")
             await update_trade(swap.tx_hash, our_tx, status)
 
-            amount_usd = swap.amount_in / 1e6
-            symbol_in, symbol_out, usdc_raw, eth_raw = await asyncio.gather(
-                token_resolver.symbol(swap.token_in),
-                token_resolver.symbol(swap.token_out),
-                w3.eth.call({"to": AsyncWeb3.to_checksum_address(USDC_BASE),
-                             "data": "0x70a08231" + "000000000000000000000000" + cfg.wallet_address[2:].lower()}),
-                w3.eth.get_balance(AsyncWeb3.to_checksum_address(cfg.wallet_address)),
-            )
-            balance_usdc = int(usdc_raw.hex(), 16) / 1e6
-            balance_eth = eth_raw / 1e18
-            await notifier.notify_trade(
+            # 先发 swap alert（无论是否自动跟单都通知）
+            await notifier.notify_swap_alert(
                 swap.tx_hash, symbol_in, symbol_out,
                 swap.token_in, swap.token_out,
-                amount_usd, our_tx, cfg.dry_run,
-                side=side, roi_pct=roi_pct, pnl_usd=pnl_usd,
-                balance_usdc=balance_usdc, balance_eth=balance_eth,
+                amount_usd, side,
+                auto_followed=bool(our_tx) or cfg.dry_run,
             )
+
+            # 如果有自动跟单结果，再发跟单详情
+            if trader is not None:
+                usdc_raw, eth_raw = await asyncio.gather(
+                    w3.eth.call({"to": AsyncWeb3.to_checksum_address(USDC_BASE),
+                                 "data": "0x70a08231" + "000000000000000000000000" + cfg.wallet_address[2:].lower()}),
+                    w3.eth.get_balance(AsyncWeb3.to_checksum_address(cfg.wallet_address)),
+                )
+                balance_usdc = int(usdc_raw.hex(), 16) / 1e6
+                balance_eth = eth_raw / 1e18
+                await notifier.notify_trade(
+                    swap.tx_hash, symbol_in, symbol_out,
+                    swap.token_in, swap.token_out,
+                    amount_usd, our_tx, cfg.dry_run,
+                    side=side, roi_pct=roi_pct, pnl_usd=pnl_usd,
+                    balance_usdc=balance_usdc, balance_eth=balance_eth,
+                )
 
             if our_tx:
                 logger.info("Trade sent: %s", our_tx)
@@ -270,18 +281,18 @@ async def run(dry_run_override: bool | None = None) -> None:
 
         async def hourly_reporter() -> None:
             # 每天 09:00/12:00/15:00/18:00/21:00 CST（即 UTC 01/04/07/10/13）各汇报一次
+            # 21:00（UTC 13）那次附带今日交易统计
             report_hours_utc = [1, 4, 7, 10, 13]
             while True:
                 now = datetime.now(timezone.utc)
-                current_minutes = now.hour * 60 + now.minute
-                next_minutes = min(
-                    (h * 60 - current_minutes) % (24 * 60) or 24 * 60
+                now_total_sec = now.hour * 3600 + now.minute * 60 + now.second
+                seconds_until = min(
+                    (h * 3600 - now_total_sec) % (24 * 3600) or 24 * 3600
                     for h in report_hours_utc
                 )
-                seconds_until = next_minutes * 60 - now.second
                 await asyncio.sleep(seconds_until)
                 try:
-                    from src.executor.trader import ERC20_BALANCE_ABI
+                    fire_hour = datetime.now(timezone.utc).hour
                     contract = w3.eth.contract(
                         address=AsyncWeb3.to_checksum_address(USDC_BASE),
                         abi=ERC20_BALANCE_ABI,
@@ -315,6 +326,15 @@ async def run(dry_run_override: bool | None = None) -> None:
                         })
 
                     stats = await get_all_stats()
+
+                    # 21:00 CST（UTC 13）附带今日统计
+                    today_trades = today_success = today_pnl = None
+                    if fire_hour == 13:
+                        today = await get_today_stats()
+                        today_trades = today["total"]
+                        today_success = today["success"]
+                        today_pnl = today["pnl"]
+
                     await notifier.notify_hourly_report(
                         balance_usdc=balance_usdc,
                         balance_eth=balance_eth,
@@ -322,23 +342,12 @@ async def run(dry_run_override: bool | None = None) -> None:
                         realized_pnl=stats["realized_pnl"],
                         total_invested=stats["total_invested"],
                         positions=enriched,
+                        today_trades=today_trades,
+                        today_success=today_success,
+                        today_pnl=today_pnl,
                     )
                 except Exception as e:
                     logger.warning("Hourly report failed: %s", e)
-
-        async def daily_reporter() -> None:
-            while True:
-                now = datetime.now(timezone.utc)
-                target_hour = cfg.daily_report_hour_utc
-                seconds_until = ((target_hour - now.hour) % 24) * 3600 - now.minute * 60 - now.second
-                if seconds_until <= 0:
-                    seconds_until += 24 * 3600
-                await asyncio.sleep(seconds_until)
-                try:
-                    stats = await get_today_stats()
-                    await notifier.notify_daily_report(stats["total"], stats["success"], stats["pnl"])
-                except Exception as e:
-                    logger.warning("Daily report failed: %s", e)
 
         tp_monitor = TakeProfitMonitor(
             okx=okx,
@@ -369,7 +378,6 @@ async def run(dry_run_override: bool | None = None) -> None:
             asyncio.create_task(watcher.start()),
             asyncio.create_task(config_reloader()),
             asyncio.create_task(hourly_reporter()),
-            asyncio.create_task(daily_reporter()),
             asyncio.create_task(tp_monitor.start()),
         ]
         await stop_event.wait()

@@ -1,6 +1,5 @@
 """
-飞书群机器人 Webhook 通知。
-配置：在 config.yaml 中设置 feishu_webhook_url。
+飞书群机器人 Webhook 通知（卡片格式）。
 """
 import logging
 import aiohttp
@@ -10,16 +9,19 @@ logger = logging.getLogger(__name__)
 
 CST = timezone(timedelta(hours=8))
 
+BASESCAN_TX = "https://basescan.org/tx/"
+BASESCAN_TOKEN = "https://basescan.org/token/"
+
 
 class FeishuNotifier:
     def __init__(self, webhook_url: str) -> None:
         self._url = webhook_url
         self._enabled = bool(webhook_url)
 
-    async def _send(self, text: str) -> None:
+    async def _send_card(self, card: dict) -> None:
         if not self._enabled:
             return
-        payload = {"msg_type": "text", "content": {"text": text}}
+        payload = {"msg_type": "interactive", "card": card}
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.post(self._url, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as r:
@@ -27,6 +29,113 @@ class FeishuNotifier:
                         logger.warning("Feishu webhook failed: %s", await r.text())
         except Exception as e:
             logger.warning("Feishu send error: %s", e)
+
+    # ── 内部构建工具 ──────────────────────────────────────────
+
+    @staticmethod
+    def _md(text: str) -> dict:
+        return {"tag": "markdown", "content": text}
+
+    @staticmethod
+    def _divider() -> dict:
+        return {"tag": "hr"}
+
+    @staticmethod
+    def _two_col(left_label: str, left_val: str, right_label: str, right_val: str) -> dict:
+        return {
+            "tag": "column_set",
+            "flex_mode": "bisect",
+            "background_style": "default",
+            "columns": [
+                {
+                    "tag": "column",
+                    "elements": [
+                        {"tag": "markdown", "content": f"**{left_label}**\n{left_val}"}
+                    ],
+                },
+                {
+                    "tag": "column",
+                    "elements": [
+                        {"tag": "markdown", "content": f"**{right_label}**\n{right_val}"}
+                    ],
+                },
+            ],
+        }
+
+    @staticmethod
+    def _button(label: str, url: str) -> dict:
+        return {
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": label},
+                    "type": "default",
+                    "url": url,
+                }
+            ],
+        }
+
+    @staticmethod
+    def _buttons(left_label: str, left_url: str, right_label: str, right_url: str) -> dict:
+        return {
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": left_label},
+                    "type": "default",
+                    "url": left_url,
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": right_label},
+                    "type": "default",
+                    "url": right_url,
+                },
+            ],
+        }
+
+    # ── 公开通知方法 ──────────────────────────────────────────
+
+    async def notify_swap_alert(
+        self,
+        source_tx: str,
+        symbol_in: str,
+        symbol_out: str,
+        token_in: str,
+        token_out: str,
+        amount_usd: float,
+        side: str,
+        auto_followed: bool,
+    ) -> None:
+        now_cst = datetime.now(CST).strftime("%m-%d %H:%M")
+        direction = "买入" if side == "buy" else "卖出"
+        token_display = symbol_out if side == "buy" else symbol_in
+        view_token = token_out if side == "buy" else token_in
+
+        if auto_followed:
+            status_line = "✅ 已自动跟单"
+            color = "green" if side == "buy" else "orange"
+        else:
+            status_line = "⚠️ 未自动跟单，请手动操作"
+            color = "yellow"
+
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"👀 跟单钱包 {direction}  {token_display}"},
+                "template": color,
+            },
+            "elements": [
+                self._two_col("方向", f"{symbol_in} → {symbol_out}", "时间", now_cst),
+                self._two_col("金额", f"${amount_usd:.2f} USDC", "跟单状态", status_line),
+                self._divider(),
+                self._buttons("查看代币", BASESCAN_TOKEN + view_token,
+                              "查看原始交易", BASESCAN_TX + source_tx),
+            ],
+        }
+        await self._send_card(card)
 
     async def notify_trade(
         self,
@@ -44,29 +153,53 @@ class FeishuNotifier:
         balance_usdc: float = 0.0,
         balance_eth: float = 0.0,
     ) -> None:
-        mode = "🔵 DRY-RUN" if dry_run else "🟢 LIVE"
-        direction = "📈 买入" if side == "buy" else "📉 卖出"
-        status = f"✅ {our_tx[:12]}..." if our_tx else ("📋 模拟" if dry_run else "❌ 失败")
         now_cst = datetime.now(CST).strftime("%m-%d %H:%M")
 
-        lines = [
-            f"{mode} {direction}  {now_cst}",
-            f"来源: {source_tx[:12]}...",
-            f"方向: {symbol_in} → {symbol_out}",
-            f"  {token_in}",
-            f"  → {token_out}",
-            f"金额: ${amount_in_usd:.2f} USDC",
+        if side == "buy":
+            color = "green"
+            title = f"⚡ 买入 {symbol_out}  ${amount_in_usd:.0f}"
+        else:
+            color = "red" if (pnl_usd or 0) < 0 else "orange"
+            sign = "+" if (pnl_usd or 0) >= 0 else ""
+            title = f"📉 卖出 {symbol_in}  {sign}${pnl_usd:.0f}" if pnl_usd is not None else f"📉 卖出 {symbol_in}"
+
+        mode_tag = "🔵 DRY-RUN" if dry_run else "🟢 LIVE"
+        status_val = f"✅ {our_tx[:12]}..." if our_tx else ("📋 模拟" if dry_run else "❌ 失败")
+        view_token = token_out if side == "buy" else token_in
+
+        elements = [
+            self._two_col("方向", f"{symbol_in} → {symbol_out}", "时间", now_cst),
+            self._two_col("金额", f"${amount_in_usd:.2f} USDC", "模式", mode_tag),
         ]
+
         if roi_pct is not None and pnl_usd is not None:
             sign = "+" if pnl_usd >= 0 else ""
-            lines.append(f"收益: {sign}{roi_pct:.1f}%  ({sign}{pnl_usd:.2f} USDC)")
-        lines.append(f"状态: {status}")
-        lines.append("━━━━━━━━━━━━━━━━━━━━")
-        lines.append(f"💰 余额: ${balance_usdc:.2f} USDC  |  {balance_eth:.5f} ETH")
-        if balance_eth < 0.003:
-            lines.append("⚠️ ETH 余额不足，请及时补充 gas")
+            elements.append(
+                self._two_col("收益率", f"{sign}{roi_pct:.1f}%", "盈亏", f"{sign}${pnl_usd:.2f}")
+            )
 
-        await self._send("\n".join(lines))
+        elements.append(self._two_col("状态", status_val, "余额", f"${balance_usdc:.2f} USDC"))
+
+        if balance_eth < 0.003:
+            elements.append(self._md("⚠️ **ETH 余额不足，请及时补充 gas**"))
+
+        elements.append(self._divider())
+
+        if our_tx:
+            elements.append(self._buttons("查看代币", BASESCAN_TOKEN + view_token,
+                                          "查看交易", BASESCAN_TX + our_tx))
+        else:
+            elements.append(self._button("查看代币", BASESCAN_TOKEN + view_token))
+
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": title},
+                "template": color,
+            },
+            "elements": elements,
+        }
+        await self._send_card(card)
 
     async def notify_take_profit(
         self,
@@ -75,16 +208,22 @@ class FeishuNotifier:
         roi_pct: float,
         pnl_usd: float,
     ) -> None:
+        now_cst = datetime.now(CST).strftime("%m-%d %H:%M")
         sign = "+" if pnl_usd >= 0 else ""
-        await self._send(
-            f"🎯 止盈触发\n"
-            f"代币: {symbol}  {token}\n"
-            f"收益率: +{roi_pct:.1f}%\n"
-            f"盈亏: {sign}{pnl_usd:.2f} USDC"
-        )
-
-    async def notify_filtered(self, source_tx: str, reason: str) -> None:
-        await self._send(f"⏭️ 跟单跳过\n来源: {source_tx[:12]}...\n原因: {reason}")
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"🎯 止盈触发  {symbol}  {sign}${pnl_usd:.0f}"},
+                "template": "turquoise",
+            },
+            "elements": [
+                self._two_col("代币", symbol, "收益率", f"+{roi_pct:.1f}%"),
+                self._two_col("盈亏", f"{sign}${pnl_usd:.2f} USDC", "时间", now_cst),
+                self._divider(),
+                self._button("查看代币", BASESCAN_TOKEN + token),
+            ],
+        }
+        await self._send_card(card)
 
     async def notify_hourly_report(
         self,
@@ -94,58 +233,70 @@ class FeishuNotifier:
         realized_pnl: float,
         total_invested: float,
         positions: list[dict],
+        today_trades: int | None = None,
+        today_success: int | None = None,
+        today_pnl: float | None = None,
     ) -> None:
         total_roi = (realized_pnl / total_invested * 100) if total_invested > 0 else 0.0
         unr_sign = "+" if unrealized_pnl >= 0 else ""
         rea_sign = "+" if realized_pnl >= 0 else ""
         now_cst = datetime.now(CST).strftime("%Y-%m-%d %H:%M")
 
-        lines = [
-            f"📊 定时汇报 {now_cst}",
-            "━━━━━━━━━━━━━━━━━━━━",
-            f"💰 余额: ${balance_usdc:.2f} USDC  |  {balance_eth:.5f} ETH",
+        elements = [
+            self._two_col("USDC 余额", f"${balance_usdc:.2f}", "ETH 余额", f"{balance_eth:.5f}"),
         ]
         if balance_eth < 0.003:
-            lines.append("⚠️ ETH 余额不足，请及时补充 gas")
-        lines += [
-            f"📈 浮动盈亏: {unr_sign}${unrealized_pnl:.2f}",
-            f"✅ 实际盈亏: {rea_sign}${realized_pnl:.2f}",
-            f"📊 总收益率: {'+' if total_roi >= 0 else ''}{total_roi:.1f}%",
-        ]
+            elements.append(self._md("⚠️ **ETH 余额不足，请及时补充 gas**"))
+
+        elements.append(
+            self._two_col("浮动盈亏", f"{unr_sign}${unrealized_pnl:.2f}", "实际盈亏", f"{rea_sign}${realized_pnl:.2f}")
+        )
+        elements.append(
+            self._two_col("总收益率", f"{'+' if total_roi >= 0 else ''}{total_roi:.1f}%", "总投入", f"${total_invested:.2f}")
+        )
+        elements.append(self._divider())
 
         if positions:
-            lines.append("━━━━━━━━━━━━━━━━━━━━")
-            lines.append(f"📦 当前持仓（{len(positions)} 笔）")
+            pos_lines = [f"**持仓（{len(positions)} 笔）**"]
             for p in positions:
+                sym = p.get("symbol", p.get("token_out", "?")[:10])
                 cost = p.get("cost_usd", 0)
                 current = p.get("current_usd", 0)
                 roi = p.get("roi_pct", 0)
-                sym = p.get("symbol", p.get("token_out", "?")[:10])
                 sign = "+" if roi >= 0 else ""
-                lines.append(f"  {sym:<10} ${cost:.2f} → ${current:.2f}  {sign}{roi:.1f}%")
+                pos_lines.append(f"• {sym}  ${cost:.2f} → ${current:.2f}  **{sign}{roi:.1f}%**")
+            elements.append(self._md("\n".join(pos_lines)))
         else:
-            lines.append("━━━━━━━━━━━━━━━━━━━━")
-            lines.append("📦 当前无持仓")
+            elements.append(self._md("📦 当前无持仓"))
 
-        await self._send("\n".join(lines))
+        if today_trades is not None:
+            elements.append(self._divider())
+            t_sign = "+" if (today_pnl or 0) >= 0 else ""
+            elements.append(self._two_col(
+                "今日跟单", f"{today_trades} 笔（成功 {today_success}）",
+                "今日盈亏", f"{t_sign}${today_pnl:.2f}" if today_pnl is not None else "—",
+            ))
 
-    async def notify_daily_report(
-        self,
-        total_trades: int,
-        success: int,
-        pnl_usd: float,
-    ) -> None:
-        sign = "+" if pnl_usd >= 0 else ""
-        text = (
-            f"📊 每日跟单汇报 {datetime.now(CST).strftime('%Y-%m-%d %H:%M')}\n"
-            f"总跟单: {total_trades} 笔\n"
-            f"成功: {success} 笔\n"
-            f"今日盈亏: {sign}{pnl_usd:.2f} USDC"
-        )
-        await self._send(text)
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"📊 定时汇报  {now_cst}"},
+                "template": "blue",
+            },
+            "elements": elements,
+        }
+        await self._send_card(card)
 
     async def notify_risk_halt(self, loss_usd: float, limit_usd: float) -> None:
-        await self._send(
-            f"🚨 风控触发：今日亏损 ${loss_usd:.2f} 已达上限 ${limit_usd:.2f}\n"
-            f"当日跟单已暂停"
-        )
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"🚨 风控触发  亏损 ${loss_usd:.2f} 已达上限"},
+                "template": "red",
+            },
+            "elements": [
+                self._two_col("今日亏损", f"${loss_usd:.2f}", "上限", f"${limit_usd:.2f}"),
+                self._md("**当日跟单已暂停**"),
+            ],
+        }
+        await self._send_card(card)

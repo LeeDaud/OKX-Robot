@@ -54,7 +54,10 @@ class AddressWatcher:
             return
 
         for block_num in range(self._last_block + 1, current_block + 1):
-            await self._process_block(block_num)
+            try:
+                await self._process_block(block_num)
+            except Exception as e:
+                logger.warning("Failed to process block %d: %s", block_num, e)
             await asyncio.sleep(0.1)
 
         self._last_block = current_block

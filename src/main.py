@@ -31,6 +31,7 @@ from src.monitor.watcher import AddressWatcher
 from src.notify.feishu import FeishuNotifier
 from src.risk.guard import DailyLossGuard
 from src.risk.take_profit import TakeProfitMonitor
+from src.rpc.router import RPCRouter
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -150,7 +151,7 @@ async def run(dry_run_override: bool | None = None) -> None:
 
     notifier = FeishuNotifier(cfg.feishu_webhook_url)
 
-    w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(cfg.rpc_http_url))
+    w3 = RPCRouter(cfg.rpc_http_url, cfg.rpc_http_url_fallback)
     swap_filter = SwapFilter(cfg.token_whitelist, cfg.min_trade_usd)
     token_resolver = TokenResolver(w3)
 

@@ -6,6 +6,7 @@ def _make_config() -> Config:
     return Config(
         rpc_ws_url="wss://example.com/ws",
         rpc_http_url="https://example.com/http",
+        rpc_http_url_fallback="",
         private_key="0xabc",
         wallet_address="0x123",
         okx_api_key="key",

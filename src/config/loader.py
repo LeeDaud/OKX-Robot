@@ -21,6 +21,7 @@ class Config:
     # 链接
     rpc_ws_url: str
     rpc_http_url: str
+    rpc_http_url_fallback: str  # 可选，空字符串 = 不启用
     # 钱包
     private_key: str
     wallet_address: str
@@ -97,6 +98,7 @@ def load_config(yaml_path: str = "config.yaml", env_path: str = ".env") -> Confi
     return Config(
         rpc_ws_url=os.environ["RPC_WS_URL"],
         rpc_http_url=os.environ["RPC_HTTP_URL"],
+        rpc_http_url_fallback=os.environ.get("RPC_HTTP_URL_FALLBACK", ""),
         private_key=os.environ["PRIVATE_KEY"],
         wallet_address=os.environ["WALLET_ADDRESS"],
         okx_api_key=os.environ["OKX_API_KEY"],

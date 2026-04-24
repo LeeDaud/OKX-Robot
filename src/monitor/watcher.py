@@ -92,10 +92,12 @@ class AddressWatcher:
             logs = [dict(log) for log in receipt.get("logs", [])]
             swap = decode_swap_from_logs(tx_hash, from_addr, logs, block_number)
             if swap is None:
+                logger.info("[SKIP] %s: no V2/V3 swap event in logs (%d logs total)", tx_hash[:10], len(logs))
                 return
 
             swap = await self._resolve_pool_tokens(swap)
             if swap is None:
+                logger.info("[SKIP] %s: failed to resolve pool token addresses", tx_hash[:10])
                 return
 
             allowed, reason = self._swap_filter.allow(swap.token_in, swap.token_out, swap.amount_in)

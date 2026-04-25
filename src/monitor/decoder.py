@@ -33,6 +33,9 @@ USDT_BASE = "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2"
 
 TRANSFER_TOPIC = Web3.keccak(text="Transfer(address,address,uint256)").hex()
 
+# 原生 ETH 地址（OKX DEX 和大多数聚合器用此表示原生代币）
+ETH_BASE = "0x0000000000000000000000000000000000000000"
+
 
 @dataclass
 class SwapInfo:
@@ -56,8 +59,11 @@ def decode_swap_from_logs(
     from_addr: str,
     logs: list[LogReceipt],
     block_number: int,
+    tx_value: int = 0,
 ) -> Optional[SwapInfo]:
-    """从交易 receipt logs 中提取 swap 信息。优先解析 V3，回退到 V2，最后用 Transfer 兜底。"""
+    """从交易 receipt logs 中提取 swap 信息。优先解析 V3，回退到 V2，最后用 Transfer 兜底。
+    tx_value 用于处理目标地址用原生 ETH 支付的场景（无 ERC20 Transfer 从目标发出）。
+    """
     for log in logs:
         topics = log.get("topics", [])
         if not topics:
@@ -72,7 +78,7 @@ def decode_swap_from_logs(
         if topic0 == v2:
             return _decode_v2_swap(tx_hash, from_addr, log, block_number)
 
-    return _decode_swap_from_transfers(tx_hash, from_addr, logs, block_number)
+    return _decode_swap_from_transfers(tx_hash, from_addr, logs, block_number, tx_value)
 
 
 def _decode_v3_swap(
@@ -158,10 +164,12 @@ def _decode_swap_from_transfers(
     from_addr: str,
     logs: list[LogReceipt],
     block_number: int,
+    tx_value: int = 0,
 ) -> Optional[SwapInfo]:
     """
     Transfer 事件兜底解析，用于 Virtuals 等不发标准 Swap 事件的 DEX。
     找 from_addr 转出的最大 Transfer 作为 token_in，转入 from_addr 的 Transfer 作为 token_out。
+    如果转出方向无 ERC20 Transfer（即用原生 ETH 支付），用 tx_value 兜底。
     """
     transfer_topic = TRANSFER_TOPIC.lstrip("0x").lower()
     transfers_out: list[tuple[str, int]] = []
@@ -197,6 +205,10 @@ def _decode_swap_from_transfers(
             transfers_out.append((token, amount))
         if to_ == from_addr.lower():
             transfers_in.append((token, amount))
+
+    # 如果用户用原生 ETH 支付（无 ERC20 Transfer 从目标发出），用 tx_value 兜底
+    if not transfers_out and tx_value > 0:
+        transfers_out.append((ETH_BASE, tx_value))
 
     if not transfers_out or not transfers_in:
         return None

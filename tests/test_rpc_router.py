@@ -78,11 +78,11 @@ async def test_raises_when_no_fallback():
         await router._call("block_number")
 
 
-# ── Watcher block-level isolation test ────────────────────────────────────
+# ── Watcher poll 测试 ──────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_poll_advances_last_block_even_if_block_fails():
+async def test_poll_advances_last_block_even_if_logs_fail():
     from src.monitor.watcher import AddressWatcher
 
     w3 = MagicMock()
@@ -90,29 +90,22 @@ async def test_poll_advances_last_block_even_if_block_fails():
     async def fake_block_number():
         return 5
 
-    # web3 exposes block_number as an awaitable property — mock as coroutine
     type(w3.eth).block_number = property(lambda self: fake_block_number())
 
     watcher = AddressWatcher.__new__(AddressWatcher)
     watcher._w3 = w3
     watcher._last_block = 3
-    watcher._targets = set()
+    watcher._targets = ["0xabcd"]
+    watcher._targets_set = {"0xabcd"}
     watcher._on_swap = AsyncMock()
     watcher._swap_filter = MagicMock()
     watcher._poll_interval = 0
     watcher._filter = MagicMock()
 
-    call_count = 0
-
-    async def fake_process_block(block_num):
-        nonlocal call_count
-        call_count += 1
-        if block_num == 4:
-            raise Exception("403 on block 4")
-
-    watcher._process_block = fake_process_block
+    # eth_getLogs 总是失败，但 _last_block 仍应前进
+    w3.eth.get_logs = AsyncMock(side_effect=Exception("RPC error"))
 
     await watcher._poll()
 
-    assert watcher._last_block == 5, "last_block must advance even when a block fails"
-    assert call_count == 2  # blocks 4 and 5 both attempted
+    assert watcher._last_block == 5, "last_block must advance even when get_logs fails"
+    w3.eth.get_logs.assert_called()

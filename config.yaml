@@ -32,5 +32,5 @@ feishu_webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/28a14ab0-82ff-
 daily_report_hour_utc: 11  # 每日汇报时间（UTC 小时，16 = 北京时间 0 点）
 
 # 监控
-poll_interval_sec: 60        # confirmed tx 轮询间隔（秒）
+poll_interval_sec: 30        # Transfer 事件轮询间隔（秒），同时查 from/to 两个方向
 

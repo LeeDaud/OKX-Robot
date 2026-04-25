@@ -1,9 +1,8 @@
 """
 监控目标地址的链上交易（eth_getLogs Transfer 轮询模式）。
-每隔 poll_interval_sec 秒用 eth_getLogs 查目标地址发出的 Transfer 事件，
-发现新 swap 后通过回调通知执行层。
-
-相比扫块方案，每次轮询只需 1 个 RPC 请求，消耗降低约 30 倍。
+每隔 poll_interval_sec 秒用 eth_getLogs 双向查询目标地址的 Transfer 事件
+（from=target 和 to=target），发现新 swap 后通过回调通知执行层。
+同时查两个方向确保不遗漏 Virtuals 等平台的交易。
 """
 import asyncio
 import logging
@@ -24,10 +23,11 @@ class AddressWatcher:
         targets: List[str],
         on_swap: Callable[[SwapInfo], Awaitable[None]],
         swap_filter: SwapFilter,
-        poll_interval: float = 60.0,
+        poll_interval: float = 30.0,
     ) -> None:
         self._w3 = w3
         self._targets = [addr.lower() for addr in targets]
+        self._targets_set: set[str] = set(self._targets)
         self._on_swap = on_swap
         self._swap_filter = swap_filter
         self._poll_interval = poll_interval
@@ -55,45 +55,69 @@ class AddressWatcher:
         if current_block <= self._last_block:
             return
 
-        # 用 eth_getLogs 查目标地址发出的 Transfer 事件
-        # topic[1] = from address（左填充 32 字节）
+        from_block = self._last_block + 1
+        to_block = current_block
         tx_hashes: set[str] = set()
+
         for addr in self._targets:
             padded = "0x" + "0" * 24 + addr[2:]
+
+            # 方向 1：目标地址发出的 Transfer（发现卖出/转账）
             try:
                 logs = await self._w3.eth.get_logs({
-                    "fromBlock": self._last_block + 1,
-                    "toBlock": current_block,
+                    "fromBlock": from_block,
+                    "toBlock": to_block,
                     "topics": [TRANSFER_TOPIC, padded],
                 })
                 for log in logs:
                     tx_hashes.add(log["transactionHash"].hex())
             except Exception as e:
-                logger.warning("get_logs failed for %s: %s", addr, e)
+                logger.warning("get_logs(from) failed for %s: %s", addr, e)
+
+            # 方向 2：目标地址收到的 Transfer（发现买入/接收）
+            try:
+                logs = await self._w3.eth.get_logs({
+                    "fromBlock": from_block,
+                    "toBlock": to_block,
+                    "topics": [TRANSFER_TOPIC, None, padded],
+                })
+                for log in logs:
+                    tx_hashes.add(log["transactionHash"].hex())
+            except Exception as e:
+                logger.warning("get_logs(to) failed for %s: %s", addr, e)
 
         self._last_block = current_block
 
-        for tx_hash in tx_hashes:
-            if not self._filter.is_new(tx_hash):
-                continue
-            await self._resolve_swap(tx_hash)
+        # 过滤已处理 + 并行解析
+        new_hashes = [h for h in tx_hashes if self._filter.is_new(h)]
+        if new_hashes:
+            await asyncio.gather(*[self._resolve_swap(h) for h in new_hashes])
 
     async def _resolve_swap(self, tx_hash: str) -> None:
         try:
-            receipt = await self._w3.eth.get_transaction_receipt(tx_hash)
+            receipt, tx = await asyncio.gather(
+                self._w3.eth.get_transaction_receipt(tx_hash),
+                self._w3.eth.get_transaction(tx_hash),
+            )
             if receipt is None or receipt["status"] != 1:
                 return
 
-            from_addr = receipt["from"].lower()
-            if from_addr not in self._targets:
+            logs = [dict(log) for log in receipt.get("logs", [])]
+
+            # 从 Transfer 事件中找目标地址（不依赖 receipt.from）
+            # 支持 relayer、合约钱包等场景
+            from_addr = self._find_target_in_logs(logs)
+            if from_addr is None:
                 return
 
             block_number = receipt["blockNumber"]
-            logs = [dict(log) for log in receipt.get("logs", [])]
+            tx_value = tx.get("value", 0) if tx else 0
+            if isinstance(tx_value, bytes):
+                tx_value = int.from_bytes(tx_value, "big")
 
             logger.info("Target tx: %s from %s", tx_hash[:10], from_addr[:10])
 
-            swap = decode_swap_from_logs(tx_hash, from_addr, logs, block_number)
+            swap = decode_swap_from_logs(tx_hash, from_addr, logs, block_number, tx_value)
             if swap is None:
                 logger.info("[SKIP] %s: no swap detected in logs (%d logs)", tx_hash[:10], len(logs))
                 return
@@ -113,6 +137,36 @@ class AddressWatcher:
             await self._on_swap(swap)
         except Exception as e:
             logger.warning("Failed to resolve swap %s: %s", tx_hash, e)
+
+    def _find_target_in_logs(self, logs: list) -> str | None:
+        """从 Transfer 事件中找涉及的目标地址。
+        不受 receipt.from 限制，支持中继器/合约钱包场景。
+        """
+        transfer_topic = TRANSFER_TOPIC.lstrip("0x").lower()
+
+        for log in logs:
+            topics = log.get("topics", [])
+            if len(topics) < 3:
+                continue
+            raw = topics[0]
+            topic0 = (raw.hex() if isinstance(raw, bytes) else raw).lstrip("0x").lower()
+            if topic0 != transfer_topic:
+                continue
+
+            from_ = self._addr_from_topic(topics[1])
+            to_ = self._addr_from_topic(topics[2])
+
+            if from_ in self._targets_set:
+                return from_
+            if to_ in self._targets_set:
+                return to_
+
+        return None
+
+    @staticmethod
+    def _addr_from_topic(topic) -> str:
+        raw = topic.hex() if isinstance(topic, bytes) else topic
+        return "0x" + raw.lstrip("0x")[-40:].lower()
 
     async def _resolve_pool_tokens(self, swap: SwapInfo) -> SwapInfo | None:
         token_in = swap.token_in

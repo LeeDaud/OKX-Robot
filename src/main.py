@@ -173,86 +173,101 @@ async def run(dry_run_override: bool | None = None) -> None:
         traders = {t.address: _make_trader(okx, t) for t in cfg.copy_targets}
 
         async def on_swap(swap: SwapInfo) -> None:
-            if not guard.can_trade():
-                await notifier.notify_risk_halt(abs(guard._loss_today), guard._limit)
-                return
+            try:
+                if not guard.can_trade():
+                    await notifier.notify_risk_halt(abs(guard._loss_today), guard._limit)
+                    return
 
-            side = "sell" if _is_sell(swap.token_out) else "buy"
-            position_id = None
-            entry_price = 0.0
-            amount_out = 0.0
-            exit_usd = 0.0
-            roi_pct = None
-            pnl_usd = None
+                side = "sell" if _is_sell(swap.token_out) else "buy"
+                position_id = None
+                entry_price = 0.0
+                amount_out = 0.0
+                exit_usd = 0.0
+                roi_pct = None
+                pnl_usd = None
 
-            if side == "buy":
-                position_id = str(uuid.uuid4())
-                # 查入场价：amount_in USDC 能买多少 token_out
-                quote = await okx.get_quote(swap.token_in, swap.token_out, swap.amount_in)
-                if quote:
-                    amount_out = float(quote.get("toTokenAmount", 0))
-                    entry_price = (swap.amount_in / 1e6) / amount_out if amount_out > 0 else 0
-            else:
-                # 卖出：匹配最近未平仓买入，计算 ROI
-                open_pos = await get_open_position_by_token(swap.token_in)
-                if open_pos:
-                    position_id = open_pos["position_id"]
-                    cost_usd = open_pos["amount_in"] / 1e6
-                    exit_usd = 0.0
-                    # 查出场价值
-                    quote = await okx.get_quote(swap.token_in, USDC_BASE, swap.amount_in)
+                if side == "buy":
+                    position_id = str(uuid.uuid4())
+                    # 查入场价：amount_in USDC 能买多少 token_out
+                    quote = await okx.get_quote(swap.token_in, swap.token_out, swap.amount_in)
                     if quote:
-                        exit_usd = float(quote.get("toTokenAmount", 0)) / 1e6
-                    if exit_usd > 0:
-                        pnl_usd = exit_usd - cost_usd
-                        roi_pct = (pnl_usd / cost_usd * 100) if cost_usd > 0 else 0
-                        await close_position(position_id, exit_usd, roi_pct, pnl_usd)
+                        amount_out = float(quote.get("toTokenAmount", 0))
+                        entry_price = (swap.amount_in / 1e6) / amount_out if amount_out > 0 else 0
+                else:
+                    # 卖出：匹配最近未平仓买入，计算 ROI
+                    open_pos = await get_open_position_by_token(swap.token_in)
+                    if open_pos:
+                        position_id = open_pos["position_id"]
+                        cost_usd = open_pos["amount_in"] / 1e6
+                        exit_usd = 0.0
+                        # 查出场价值
+                        quote = await okx.get_quote(swap.token_in, USDC_BASE, swap.amount_in)
+                        if quote:
+                            exit_usd = float(quote.get("toTokenAmount", 0)) / 1e6
+                        if exit_usd > 0:
+                            pnl_usd = exit_usd - cost_usd
+                            roi_pct = (pnl_usd / cost_usd * 100) if cost_usd > 0 else 0
+                            await close_position(position_id, exit_usd, roi_pct, pnl_usd)
 
-            await insert_trade(
-                swap.tx_hash, swap.from_addr,
-                swap.token_in, swap.token_out, swap.amount_in,
-                side=side, position_id=position_id,
-                entry_price=entry_price, amount_out=amount_out,
-            )
-
-            amount_usd = exit_usd if side == "sell" and exit_usd else swap.amount_in / 1e6
-            symbol_in, symbol_out = await asyncio.gather(
-                token_resolver.symbol(swap.token_in),
-                token_resolver.symbol(swap.token_out),
-            )
-
-            trader = traders.get(swap.from_addr)
-            our_tx = await trader.execute(swap) if trader else None
-            status = "success" if our_tx else ("dry_run" if cfg.dry_run else "failed")
-            await update_trade(swap.tx_hash, our_tx, status)
-
-            # 先发 swap alert（无论是否自动跟单都通知）
-            await notifier.notify_swap_alert(
-                swap.tx_hash, symbol_in, symbol_out,
-                swap.token_in, swap.token_out,
-                amount_usd, side,
-                auto_followed=bool(our_tx) or cfg.dry_run,
-            )
-
-            # 如果有自动跟单结果，再发跟单详情
-            if trader is not None:
-                usdc_raw, eth_raw = await asyncio.gather(
-                    w3.eth.call({"to": AsyncWeb3.to_checksum_address(USDC_BASE),
-                                 "data": "0x70a08231" + "000000000000000000000000" + cfg.wallet_address[2:].lower()}),
-                    w3.eth.get_balance(AsyncWeb3.to_checksum_address(cfg.wallet_address)),
+                await insert_trade(
+                    swap.tx_hash, swap.from_addr,
+                    swap.token_in, swap.token_out, swap.amount_in,
+                    side=side, position_id=position_id,
+                    entry_price=entry_price, amount_out=amount_out,
                 )
-                balance_usdc = int(usdc_raw.hex(), 16) / 1e6
-                balance_eth = eth_raw / 1e18
-                await notifier.notify_trade(
+
+                amount_usd = exit_usd if side == "sell" and exit_usd else swap.amount_in / 1e6
+                symbol_in, symbol_out = await asyncio.gather(
+                    token_resolver.symbol(swap.token_in),
+                    token_resolver.symbol(swap.token_out),
+                )
+
+                trader = traders.get(swap.from_addr)
+                our_tx = await trader.execute(swap) if trader else None
+                status = "success" if our_tx else ("dry_run" if cfg.dry_run else "failed")
+                await update_trade(swap.tx_hash, our_tx, status)
+
+                # 先发 swap alert（无论是否自动跟单都通知）
+                await notifier.notify_swap_alert(
                     swap.tx_hash, symbol_in, symbol_out,
                     swap.token_in, swap.token_out,
-                    amount_usd, our_tx, cfg.dry_run,
-                    side=side, roi_pct=roi_pct, pnl_usd=pnl_usd,
-                    balance_usdc=balance_usdc, balance_eth=balance_eth,
+                    amount_usd, side,
+                    auto_followed=bool(our_tx) or cfg.dry_run,
                 )
 
-            if our_tx:
-                logger.info("Trade sent: %s", our_tx)
+                # 如果有自动跟单结果，再发跟单详情
+                if trader is not None:
+                    usdc_raw, eth_raw = await asyncio.gather(
+                        w3.eth.call({"to": AsyncWeb3.to_checksum_address(USDC_BASE),
+                                     "data": "0x70a08231" + "000000000000000000000000" + cfg.wallet_address[2:].lower()}),
+                        w3.eth.get_balance(AsyncWeb3.to_checksum_address(cfg.wallet_address)),
+                    )
+                    balance_usdc = int(usdc_raw.hex(), 16) / 1e6
+                    balance_eth = eth_raw / 1e18
+                    await notifier.notify_trade(
+                        swap.tx_hash, symbol_in, symbol_out,
+                        swap.token_in, swap.token_out,
+                        amount_usd, our_tx, cfg.dry_run,
+                        side=side, roi_pct=roi_pct, pnl_usd=pnl_usd,
+                        balance_usdc=balance_usdc, balance_eth=balance_eth,
+                    )
+
+                if our_tx:
+                    logger.info("Trade sent: %s", our_tx)
+            except Exception as e:
+                logger.error("on_swap failed: %s | tx=%s token=%s",
+                             e, swap.tx_hash[:10], swap.token_in[:10])
+                try:
+                    sym_in = await token_resolver.symbol(swap.token_in)
+                    sym_out = await token_resolver.symbol(swap.token_out)
+                except Exception:
+                    sym_in, sym_out = swap.token_in[:10], swap.token_out[:10]
+                await notifier.notify_trade(
+                    swap.tx_hash, sym_in, sym_out,
+                    swap.token_in, swap.token_out,
+                    swap.amount_in / 1e6, None, cfg.dry_run,
+                    side="?", balance_usdc=0, balance_eth=0,
+                )
 
         async def on_take_profit(pos: dict, roi: float, pnl: float) -> None:
             symbol = await token_resolver.symbol(pos["token_out"])

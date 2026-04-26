@@ -30,10 +30,6 @@ ERC20_BALANCE_ABI = [
     },
 ]
 
-# USDC/USDT decimals on Base
-STABLE_DECIMALS = 6
-
-
 class Trader:
     def __init__(
         self,
@@ -64,8 +60,15 @@ class Trader:
     async def execute(self, swap: SwapInfo) -> Optional[str]:
         """
         执行跟单。返回我方 txhash（dry-run 时返回 None）。
+        买入时统一用 USDC 支付，卖出时沿用 swap.token_in。
         """
-        amount_in = await self._calculate_amount(swap)
+        is_buy = swap.token_out.lower() not in {
+            USDC_BASE.lower(), USDT_BASE.lower(), VIRTUALS_BASE.lower(),
+        }
+        payment_token = USDC_BASE if is_buy else swap.token_in
+        target_token = swap.token_out if is_buy else swap.token_in
+
+        amount_in = await self._calculate_amount()
         if amount_in is None or amount_in <= 0:
             logger.info("[SKIP] Insufficient balance or amount too small")
             return None
@@ -75,7 +78,7 @@ class Trader:
             return None
 
         quote = await self._okx.get_quote(
-            swap.token_in, swap.token_out, amount_in, self._slippage
+            payment_token, target_token, amount_in, self._slippage
         )
         if quote is None:
             logger.warning("[SKIP] Failed to get quote")
@@ -85,8 +88,8 @@ class Trader:
         logger.info(
             "[%s] %s -> %s | amount_in=%d | expected_out=%s",
             "DRY-RUN" if self._dry_run else "LIVE",
-            swap.token_in[:10],
-            swap.token_out[:10],
+            payment_token[:10],
+            target_token[:10],
             amount_in,
             to_amount,
         )
@@ -94,36 +97,27 @@ class Trader:
         if self._dry_run:
             return None
 
-        return await self._send_swap(swap.token_in, swap.token_out, amount_in)
+        return await self._send_swap(payment_token, target_token, amount_in)
 
-    async def _calculate_amount(self, swap: SwapInfo) -> Optional[int]:
+    async def _calculate_amount(self) -> Optional[int]:
         """
-        ratio 模式：空闲 USDC/Virtuals 余额 × ratio
-        fixed 模式：固定 trade_fixed_usd（USDC/Virtuals）
+        ratio 模式：空闲 USDC 余额 × ratio
+        fixed 模式：固定 trade_fixed_usd
         两种模式都受 trade_max_usd 上限约束。
-
-        当 token_in 是 Virtuals 时，使用 Virtuals 余额计算跟单金额。
+        统一使用 USDC 计算。
         """
-        # 判断使用哪个稳定币作为基准
-        stable_token = USDC_BASE
-        stable_decimals = STABLE_DECIMALS
-
-        if swap.token_in.lower() == VIRTUALS_BASE.lower():
-            stable_token = VIRTUALS_BASE
-            stable_decimals = 18  # Virtuals 是 18 位小数
-
-        balance = await self._get_token_balance(stable_token)
+        balance = await self._get_token_balance(USDC_BASE)
         if balance is None:
             return None
 
         if self._mode == "fixed":
-            amount = int(Decimal(str(self._fixed_usd)) * Decimal(f"1e{stable_decimals}"))
+            amount = int(Decimal(str(self._fixed_usd)) * Decimal("1e6"))
         else:
             amount = int(Decimal(str(balance)) * Decimal(str(self._ratio)))
 
         # 单笔上限
         if self._max_usd > 0:
-            cap = int(Decimal(str(self._max_usd)) * Decimal(f"1e{stable_decimals}"))
+            cap = int(Decimal(str(self._max_usd)) * Decimal("1e6"))
             amount = min(amount, cap)
 
         # 不能超过实际余额

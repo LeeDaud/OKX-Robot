@@ -58,9 +58,9 @@ class OKXDexClient:
         slippage: float = 0.01,
     ) -> Optional[dict]:
         """获取报价，返回 OKX API 原始响应。"""
-        path = "/api/v5/dex/aggregator/quote"
+        path = "/api/v6/dex/aggregator/quote"
         params = {
-            "chainId": CHAIN_ID,
+            "chainIndex": CHAIN_ID,
             "fromTokenAddress": token_in,
             "toTokenAddress": token_out,
             "amount": str(amount),
@@ -77,14 +77,14 @@ class OKXDexClient:
         slippage: float = 0.01,
     ) -> Optional[dict]:
         """获取可直接广播的 swap calldata。"""
-        path = "/api/v5/dex/aggregator/swap"
+        path = "/api/v6/dex/aggregator/swap"
         params = {
-            "chainId": CHAIN_ID,
+            "chainIndex": CHAIN_ID,
             "fromTokenAddress": token_in,
             "toTokenAddress": token_out,
             "amount": str(amount),
             "userWalletAddress": user_addr,
-            "slippage": str(slippage),
+            "slippagePercent": str(slippage),
         }
         return await self._get(path, params)
 

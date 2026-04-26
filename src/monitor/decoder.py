@@ -89,7 +89,16 @@ def _decode_v3_swap(
     V3 Swap event: Swap(address sender, address recipient,
                         int256 amount0, int256 amount1, ...)
     amount0/amount1 为有符号整数，负值表示流出（token_out），正值表示流入（token_in）。
+    只匹配 sender 或 recipient 是 from_addr 的事件，跳过路由器的内部交换。
     """
+    topics = log.get("topics", [])
+    if len(topics) < 3:
+        return None
+    sender = _topic_to_addr(topics[1])
+    recipient = _topic_to_addr(topics[2])
+    if from_addr.lower() not in (sender.lower(), recipient.lower()):
+        return None
+
     try:
         data = log["data"]
         data_bytes = bytes.fromhex(data[2:] if data.startswith("0x") else data)
@@ -122,13 +131,27 @@ def _decode_v3_swap(
         return None
 
 
+def _topic_to_addr(topic) -> str:
+    raw = topic.hex() if isinstance(topic, bytes) else topic
+    return "0x" + raw.lstrip("0x")[-40:].lower()
+
+
 def _decode_v2_swap(
     tx_hash: str, from_addr: str, log: LogReceipt, block_number: int
 ) -> Optional[SwapInfo]:
     """
     V2 Swap event: Swap(address sender, uint amount0In, uint amount1In,
                         uint amount0Out, uint amount1Out, address to)
+    只匹配 sender 或 to 是 from_addr 的事件，跳过路由器的内部交换。
     """
+    topics = log.get("topics", [])
+    if len(topics) < 3:
+        return None
+    sender = _topic_to_addr(topics[1])
+    to = _topic_to_addr(topics[2])
+    if from_addr.lower() not in (sender.lower(), to.lower()):
+        return None
+
     try:
         data = log["data"]
         data_bytes = bytes.fromhex(data[2:] if data.startswith("0x") else data)
@@ -185,12 +208,8 @@ def _decode_swap_from_transfers(
         if topic0 != transfer_topic:
             continue
 
-        def _addr(topic) -> str:
-            raw = topic.hex() if isinstance(topic, bytes) else topic
-            return "0x" + raw.lstrip("0x")[-40:].lower()
-
-        from_ = _addr(topics[1])
-        to_ = _addr(topics[2])
+        from_ = _topic_to_addr(topics[1])
+        to_ = _topic_to_addr(topics[2])
 
         data = log.get("data", b"")
         if isinstance(data, bytes):

@@ -186,7 +186,7 @@ class FeishuNotifier:
 
         elements.append(self._two_col("状态", status_val, "余额", f"${balance_usdc:.2f} USDC"))
 
-        if balance_eth < 0.003:
+        if balance_eth < 0.001:
             elements.append(self._md("⚠️ **ETH 余额不足，请及时补充 gas**"))
 
         elements.append(self._divider())
@@ -251,7 +251,7 @@ class FeishuNotifier:
         elements = [
             self._two_col("USDC 余额", f"${balance_usdc:.2f}", "ETH 余额", f"{balance_eth:.5f}"),
         ]
-        if balance_eth < 0.003:
+        if balance_eth < 0.001:
             elements.append(self._md("⚠️ **ETH 余额不足，请及时补充 gas**"))
 
         elements.append(

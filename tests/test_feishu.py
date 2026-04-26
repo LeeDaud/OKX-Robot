@@ -103,7 +103,7 @@ async def test_trade_eth_warning(notifier):
         amount_unit="USDC",
         our_tx=None,
         dry_run=True,
-        balance_eth=0.001,  # 低于 0.003 触发警告
+        balance_eth=0.0005,  # 低于 0.001 触发警告
     )
     card = mock.call_args[0][0]
     texts = str(card["elements"])

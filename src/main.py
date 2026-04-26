@@ -241,7 +241,9 @@ async def run(dry_run_override: bool | None = None) -> None:
                 )
 
                 trader = traders.get(swap.from_addr)
-                our_tx = await trader.execute(swap) if trader else None
+                execute_result = await trader.execute(swap) if trader else None
+                our_tx = execute_result[0] if execute_result else None
+                our_amount_usd = execute_result[1] if execute_result else 0.0
                 status = "success" if our_tx else ("dry_run" if cfg.dry_run else "failed")
                 await update_trade(swap.tx_hash, our_tx, status)
 
@@ -262,10 +264,13 @@ async def run(dry_run_override: bool | None = None) -> None:
                     )
                     balance_usdc = int(usdc_raw.hex(), 16) / 1e6
                     balance_eth = eth_raw / 1e18
+                    # 自动跟单时显示实际跟单金额，否则显示跟单钱包金额
+                    notify_amount = our_amount_usd if our_amount_usd > 0 else amount_display
+                    notify_unit = "USDC" if our_amount_usd > 0 else amount_unit
                     await notifier.notify_trade(
                         swap.tx_hash, symbol_in, symbol_out,
                         swap.token_in, swap.token_out,
-                        amount_display, amount_unit, our_tx, cfg.dry_run,
+                        notify_amount, notify_unit, our_tx, cfg.dry_run,
                         side=side, roi_pct=roi_pct, pnl_usd=pnl_usd,
                         balance_usdc=balance_usdc, balance_eth=balance_eth,
                     )

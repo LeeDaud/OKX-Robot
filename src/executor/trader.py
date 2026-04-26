@@ -57,9 +57,12 @@ class Trader:
         self._gas_limit_gwei = gas_limit_gwei
         self._dry_run = dry_run
 
-    async def execute(self, swap: SwapInfo) -> Optional[str]:
+    async def execute(self, swap: SwapInfo) -> tuple[Optional[str], float]:
         """
-        执行跟单。返回我方 txhash（dry-run 时返回 None）。
+        执行跟单。返回 (txhash, amount_usd)。
+        - 跳过时返回 (None, 0.0)
+        - dry-run 时返回 (None, 计算金额)
+        - 成功时返回 (txhash, 实际跟单金额)
         买入时统一用 USDC 支付，卖出时沿用 swap.token_in。
         """
         is_buy = swap.token_out.lower() not in {
@@ -71,33 +74,35 @@ class Trader:
         amount_in = await self._calculate_amount()
         if amount_in is None or amount_in <= 0:
             logger.info("[SKIP] Insufficient balance or amount too small")
-            return None
+            return (None, 0.0)
 
         if not await self._check_gas():
             logger.info("[SKIP] Gas price too high")
-            return None
+            return (None, 0.0)
 
         quote = await self._okx.get_quote(
             payment_token, target_token, amount_in, self._slippage
         )
         if quote is None:
             logger.warning("[SKIP] Failed to get quote")
-            return None
+            return (None, 0.0)
 
+        amount_usd = amount_in / 1e6
         to_amount = quote.get("toTokenAmount", "?")
         logger.info(
-            "[%s] %s -> %s | amount_in=%d | expected_out=%s",
+            "[%s] %s -> %s | amount_in=%d (%.2f USDC) | expected_out=%s",
             "DRY-RUN" if self._dry_run else "LIVE",
             payment_token[:10],
             target_token[:10],
-            amount_in,
+            amount_in, amount_usd,
             to_amount,
         )
 
         if self._dry_run:
-            return None
+            return (None, amount_usd)
 
-        return await self._send_swap(payment_token, target_token, amount_in)
+        tx_hash = await self._send_swap(payment_token, target_token, amount_in)
+        return (tx_hash, amount_usd)
 
     async def _calculate_amount(self) -> Optional[int]:
         """

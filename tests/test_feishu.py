@@ -29,7 +29,8 @@ async def test_trade_buy_card_structure(notifier):
         symbol_in="USDC", symbol_out="VIRTUAL",
         token_in="0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
         token_out="0xdeadbeef",
-        amount_in_usd=50.0,
+        amount_display=50.0,
+        amount_unit="USDC",
         our_tx="0xourtx123456",
         dry_run=False,
         side="buy",
@@ -53,7 +54,8 @@ async def test_trade_sell_profit_card(notifier):
         symbol_in="VIRTUAL", symbol_out="USDC",
         token_in="0xdeadbeef",
         token_out="0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        amount_in_usd=80.0,
+        amount_display=80.0,
+        amount_unit="USDC",
         our_tx=None,
         dry_run=True,
         side="sell",
@@ -77,7 +79,8 @@ async def test_trade_sell_loss_card(notifier):
         symbol_in="VIRTUAL", symbol_out="USDC",
         token_in="0xdeadbeef",
         token_out="0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        amount_in_usd=50.0,
+        amount_display=50.0,
+        amount_unit="USDC",
         our_tx=None,
         dry_run=False,
         side="sell",
@@ -96,7 +99,8 @@ async def test_trade_eth_warning(notifier):
         symbol_in="USDC", symbol_out="TOKEN",
         token_in="0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
         token_out="0xdeadbeef",
-        amount_in_usd=10.0,
+        amount_display=10.0,
+        amount_unit="USDC",
         our_tx=None,
         dry_run=True,
         balance_eth=0.001,  # 低于 0.003 触发警告
@@ -195,7 +199,7 @@ async def test_swap_alert_auto_followed(notifier):
     await notifier.notify_swap_alert(
         "0xabc", "USDC", "VIRTUAL",
         "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "0xdeadbeef",
-        50.0, "buy", auto_followed=True,
+        50.0, "USDC", "buy", auto_followed=True,
     )
     card = mock.call_args[0][0]
     assert "买入" in card["header"]["title"]["content"]
@@ -210,7 +214,7 @@ async def test_swap_alert_not_followed(notifier):
     await notifier.notify_swap_alert(
         "0xabc", "USDC", "VIRTUAL",
         "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "0xdeadbeef",
-        50.0, "buy", auto_followed=False,
+        50.0, "USDC", "buy", auto_followed=False,
     )
     card = mock.call_args[0][0]
     assert card["header"]["template"] == "yellow"
@@ -240,5 +244,5 @@ async def test_disabled_notifier_does_not_send():
     assert not n._enabled
     # _send_card 内部有 enabled 检查，mock aiohttp 确认不发网络请求
     with patch("aiohttp.ClientSession") as mock_session:
-        await n.notify_trade("0x", "A", "B", "0x1", "0x2", 10.0, None, True)
+        await n.notify_trade("0x", "A", "B", "0x1", "0x2", 10.0, "USDC", None, True)
         mock_session.assert_not_called()

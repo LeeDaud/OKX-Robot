@@ -105,7 +105,8 @@ class FeishuNotifier:
         symbol_out: str,
         token_in: str,
         token_out: str,
-        amount_usd: float,
+        amount_display: float,
+        amount_unit: str,
         side: str,
         auto_followed: bool,
     ) -> None:
@@ -121,6 +122,8 @@ class FeishuNotifier:
             status_line = "⚠️ 未自动跟单，请手动操作"
             color = "yellow"
 
+        amount_str = f"${amount_display:.2f} {amount_unit}" if amount_unit == "USDC" else f"{amount_display:.4f} {amount_unit}"
+
         card = {
             "config": {"wide_screen_mode": True},
             "header": {
@@ -129,7 +132,7 @@ class FeishuNotifier:
             },
             "elements": [
                 self._two_col("方向", f"{symbol_in} → {symbol_out}", "时间", now_cst),
-                self._two_col("金额", f"${amount_usd:.2f} USDC", "跟单状态", status_line),
+                self._two_col("金额", amount_str, "跟单状态", status_line),
                 self._divider(),
                 self._buttons("查看代币", BASESCAN_TOKEN + view_token,
                               "查看原始交易", BASESCAN_TX + source_tx),
@@ -144,7 +147,8 @@ class FeishuNotifier:
         symbol_out: str,
         token_in: str,
         token_out: str,
-        amount_in_usd: float,
+        amount_display: float,
+        amount_unit: str,
         our_tx: str | None,
         dry_run: bool,
         side: str = "buy",
@@ -155,9 +159,11 @@ class FeishuNotifier:
     ) -> None:
         now_cst = datetime.now(CST).strftime("%m-%d %H:%M")
 
+        amount_str = f"${amount_display:.2f} {amount_unit}" if amount_unit == "USDC" else f"{amount_display:.4f} {amount_unit}"
+
         if side == "buy":
             color = "green"
-            title = f"⚡ 买入 {symbol_out}  ${amount_in_usd:.0f}"
+            title = f"⚡ 买入 {symbol_out}  {amount_str}"
         else:
             color = "red" if (pnl_usd or 0) < 0 else "orange"
             sign = "+" if (pnl_usd or 0) >= 0 else ""
@@ -169,7 +175,7 @@ class FeishuNotifier:
 
         elements = [
             self._two_col("方向", f"{symbol_in} → {symbol_out}", "时间", now_cst),
-            self._two_col("金额", f"${amount_in_usd:.2f} USDC", "模式", mode_tag),
+            self._two_col("金额", amount_str, "模式", mode_tag),
         ]
 
         if roi_pct is not None and pnl_usd is not None:

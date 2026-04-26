@@ -21,6 +21,7 @@ from src.db.database import (
     init_db, insert_trade, update_trade,
     get_today_pnl, get_today_stats, get_all_stats,
     get_open_positions, get_open_position_by_token, close_position,
+    _amount_to_usd,
 )
 from src.executor.okx_client import OKXDexClient
 from src.executor.trader import Trader, ERC20_BALANCE_ABI
@@ -192,13 +193,14 @@ async def run(dry_run_override: bool | None = None) -> None:
                     quote = await okx.get_quote(swap.token_in, swap.token_out, swap.amount_in)
                     if quote:
                         amount_out = float(quote.get("toTokenAmount", 0))
-                        entry_price = (swap.amount_in / 1e6) / amount_out if amount_out > 0 else 0
+                        cost = _amount_to_usd(swap.amount_in, swap.token_in)
+                        entry_price = cost / amount_out if amount_out > 0 else 0
                 else:
                     # 卖出：匹配最近未平仓买入，计算 ROI
                     open_pos = await get_open_position_by_token(swap.token_in)
                     if open_pos:
                         position_id = open_pos["position_id"]
-                        cost_usd = open_pos["amount_in"] / 1e6
+                        cost_usd = _amount_to_usd(open_pos["amount_in"], open_pos["token_in"])
                         exit_usd = 0.0
                         # 查出场价值
                         quote = await okx.get_quote(swap.token_in, USDC_BASE, swap.amount_in)
@@ -216,7 +218,23 @@ async def run(dry_run_override: bool | None = None) -> None:
                     entry_price=entry_price, amount_out=amount_out,
                 )
 
-                amount_usd = exit_usd if side == "sell" and exit_usd else swap.amount_in / 1e6
+                # 计算显示金额：根据 token_in 类型确定小数位数
+                if swap.token_in.lower() == USDC_BASE.lower() or swap.token_in.lower() == USDT_BASE.lower():
+                    amount_display = swap.amount_in / 1e6
+                    amount_unit = "USDC"
+                elif swap.token_in.lower() == VIRTUALS_BASE.lower():
+                    amount_display = swap.amount_in / 1e18
+                    amount_unit = "VIRTUAL"
+                else:
+                    # 其他代币默认 18 位小数
+                    amount_display = swap.amount_in / 1e18
+                    amount_unit = "TOKEN"
+
+                # 卖出时如果有出场价值，优先显示
+                if side == "sell" and exit_usd > 0:
+                    amount_display = exit_usd
+                    amount_unit = "USDC"
+
                 symbol_in, symbol_out = await asyncio.gather(
                     token_resolver.symbol(swap.token_in),
                     token_resolver.symbol(swap.token_out),
@@ -231,7 +249,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                 await notifier.notify_swap_alert(
                     swap.tx_hash, symbol_in, symbol_out,
                     swap.token_in, swap.token_out,
-                    amount_usd, side,
+                    amount_display, amount_unit, side,
                     auto_followed=bool(our_tx) or cfg.dry_run,
                 )
 
@@ -247,7 +265,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                     await notifier.notify_trade(
                         swap.tx_hash, symbol_in, symbol_out,
                         swap.token_in, swap.token_out,
-                        amount_usd, our_tx, cfg.dry_run,
+                        amount_display, amount_unit, our_tx, cfg.dry_run,
                         side=side, roi_pct=roi_pct, pnl_usd=pnl_usd,
                         balance_usdc=balance_usdc, balance_eth=balance_eth,
                     )
@@ -265,7 +283,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                 await notifier.notify_trade(
                     swap.tx_hash, sym_in, sym_out,
                     swap.token_in, swap.token_out,
-                    swap.amount_in / 1e6, None, cfg.dry_run,
+                    swap.amount_in / 1e18, "TOKEN", None, cfg.dry_run,
                     side="?", balance_usdc=0, balance_eth=0,
                 )
 
@@ -328,7 +346,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                     for pos in open_pos:
                         token = pos["token_out"]
                         amount_out = pos.get("amount_out", 0)
-                        cost_usd = pos.get("amount_in", 0) / 1e6
+                        cost_usd = _amount_to_usd(pos.get("amount_in", 0), pos.get("token_in", USDC_BASE))
                         current_usd = cost_usd
                         roi = 0.0
                         if amount_out > 0:

@@ -11,6 +11,19 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = "copytrade.db"
 
+# token 地址 → decimals 映射（用于 raw amount → USD 换算）
+STABLE_DECIMALS_MAP = {
+    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 6,   # USDC
+    "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2": 6,   # USDT
+    "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b": 18,  # VIRTUAL
+}
+
+
+def _amount_to_usd(raw: str | int, token_addr: str) -> float:
+    """根据 token_in 地址将 raw amount 换算为 USD 价值。"""
+    decimals = STABLE_DECIMALS_MAP.get(token_addr.lower(), 6)
+    return int(raw) / 10 ** decimals
+
 CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS copy_trades (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,21 +154,27 @@ async def get_open_position_by_token(token: str, path: str = DB_PATH) -> Optiona
 
 
 async def get_all_stats(path: str = DB_PATH) -> dict:
-    """总实际盈亏、总投入金额（用于总收益率）。"""
+    """总实际盈亏、总投入金额（逐行按 token_in 换算，兼容多 decimal 代币）。"""
     async with aiosqlite.connect(path) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT
-                 COUNT(*),
-                 COALESCE(SUM(CASE WHEN side='buy' THEN amount_in ELSE 0 END), 0),
-                 COALESCE(SUM(pnl), 0)
+            """SELECT side, token_in, amount_in, pnl
                FROM copy_trades WHERE status IN ('success', 'dry_run')"""
         ) as cur:
-            row = await cur.fetchone()
-            return {
-                "total_trades": row[0] or 0,
-                "total_invested": float(row[1] or 0) / 1e6,
-                "realized_pnl": float(row[2] or 0),
-            }
+            rows = [dict(row) async for row in cur]
+
+    total_invested = 0.0
+    realized_pnl = 0.0
+    for row in rows:
+        if row["side"] == "buy":
+            total_invested += _amount_to_usd(row["amount_in"], row["token_in"])
+        realized_pnl += float(row["pnl"] or 0)
+
+    return {
+        "total_trades": len(rows),
+        "total_invested": total_invested,
+        "realized_pnl": realized_pnl,
+    }
 
 
 async def get_today_stats(path: str = DB_PATH) -> dict:

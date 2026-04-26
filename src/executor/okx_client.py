@@ -2,6 +2,7 @@
 OKX DEX Aggregator API 封装。
 文档：https://www.okx.com/web3/build/docs/waas/dex-swap
 """
+import asyncio
 import hashlib
 import hmac
 import base64
@@ -87,23 +88,28 @@ class OKXDexClient:
         }
         return await self._get(path, params)
 
-    async def _get(self, path: str, params: dict) -> Optional[dict]:
+    async def _get(self, path: str, params: dict, retries: int = 2) -> Optional[dict]:
         query = "&".join(f"{k}={v}" for k, v in params.items())
         full_path = f"{path}?{query}"
         headers = _headers(self._api_key, self._secret, self._passphrase, full_path)
         url = BASE_URL + full_path
 
-        try:
-            async with self._session.get(url, headers=headers) as resp:
-                data = await resp.json()
-                if data.get("code") != "0":
-                    logger.warning("OKX API error: %s", data.get("msg"))
-                    return None
-                items = data.get("data") or []
-                if not items:
-                    logger.warning("OKX API returned empty data for %s", path)
-                    return None
-                return items[0]
-        except Exception as e:
-            logger.error("OKX API request failed: %s", e)
-            return None
+        for attempt in range(retries + 1):
+            try:
+                async with self._session.get(url, headers=headers) as resp:
+                    data = await resp.json()
+                    if data.get("code") != "0":
+                        logger.warning("OKX API error: %s", data.get("msg"))
+                        return None
+                    items = data.get("data") or []
+                    if not items:
+                        logger.warning("OKX API returned empty data for %s", path)
+                        return None
+                    return items[0]
+            except Exception as e:
+                if attempt < retries:
+                    logger.warning("OKX API request failed (attempt %d/%d): %s", attempt + 1, retries + 1, e)
+                    await asyncio.sleep(1)
+                    continue
+                logger.error("OKX API request failed after %d attempts: %s", retries + 1, e)
+                return None

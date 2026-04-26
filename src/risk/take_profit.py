@@ -5,7 +5,7 @@ import asyncio
 import logging
 from typing import Callable, Awaitable
 
-from src.db.database import get_open_positions, close_position
+from src.db.database import get_open_positions, close_position, _amount_to_usd
 from src.executor.okx_client import OKXDexClient
 from src.executor.trader import Trader
 from src.monitor.decoder import USDC_BASE
@@ -51,7 +51,7 @@ class TakeProfitMonitor:
     async def _evaluate(self, pos: dict) -> None:
         token = pos["token_out"]
         amount_out = pos.get("amount_out", 0)
-        cost_usd = pos.get("amount_in", 0) / 1e6
+        cost_usd = _amount_to_usd(pos.get("amount_in", 0), pos.get("token_in", USDC_BASE))
 
         if not token or amount_out <= 0 or cost_usd <= 0:
             return

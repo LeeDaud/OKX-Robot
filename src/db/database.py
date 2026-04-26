@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS copy_trades (
     source_addr  TEXT NOT NULL,
     token_in     TEXT,
     token_out    TEXT,
-    amount_in    INTEGER,
+    amount_in    TEXT,
     amount_out   REAL DEFAULT 0,
     our_tx       TEXT,
     status       TEXT NOT NULL DEFAULT 'pending',
@@ -72,7 +72,7 @@ async def insert_trade(
                (source_tx, source_addr, token_in, token_out, amount_in,
                 amount_out, side, position_id, entry_price, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (source_tx, source_addr, token_in, token_out, amount_in,
+            (source_tx, source_addr, token_in, token_out, str(amount_in),
              amount_out, side, position_id,
              entry_price, datetime.now(timezone.utc).isoformat()),
         )

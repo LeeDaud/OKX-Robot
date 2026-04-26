@@ -8,7 +8,8 @@
       "Bash(ssh *)",
       "WebSearch",
       "WebFetch(domain:open.larksuite.com)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -x -v)"
     ]
   }
 }

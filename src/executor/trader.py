@@ -9,7 +9,7 @@ from web3 import AsyncWeb3
 from eth_account import Account
 
 from src.executor.okx_client import OKXDexClient
-from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, WETH_BASE
+from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, WETH_BASE, VIRTUALS_BASE
 
 logger = logging.getLogger(__name__)
 
@@ -98,22 +98,32 @@ class Trader:
 
     async def _calculate_amount(self, swap: SwapInfo) -> Optional[int]:
         """
-        ratio 模式：空闲 USDC 余额 × ratio
-        fixed 模式：固定 trade_fixed_usd（USDC）
+        ratio 模式：空闲 USDC/Virtuals 余额 × ratio
+        fixed 模式：固定 trade_fixed_usd（USDC/Virtuals）
         两种模式都受 trade_max_usd 上限约束。
+
+        当 token_in 是 Virtuals 时，使用 Virtuals 余额计算跟单金额。
         """
-        balance = await self._get_token_balance(USDC_BASE)
+        # 判断使用哪个稳定币作为基准
+        stable_token = USDC_BASE
+        stable_decimals = STABLE_DECIMALS
+
+        if swap.token_in.lower() == VIRTUALS_BASE.lower():
+            stable_token = VIRTUALS_BASE
+            stable_decimals = 18  # Virtuals 是 18 位小数
+
+        balance = await self._get_token_balance(stable_token)
         if balance is None:
             return None
 
         if self._mode == "fixed":
-            amount = int(Decimal(str(self._fixed_usd)) * Decimal("1e6"))
+            amount = int(Decimal(str(self._fixed_usd)) * Decimal(f"1e{stable_decimals}"))
         else:
             amount = int(Decimal(str(balance)) * Decimal(str(self._ratio)))
 
         # 单笔上限
         if self._max_usd > 0:
-            cap = int(Decimal(str(self._max_usd)) * Decimal("1e6"))
+            cap = int(Decimal(str(self._max_usd)) * Decimal(f"1e{stable_decimals}"))
             amount = min(amount, cap)
 
         # 不能超过实际余额

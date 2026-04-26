@@ -24,7 +24,7 @@ from src.db.database import (
 )
 from src.executor.okx_client import OKXDexClient
 from src.executor.trader import Trader, ERC20_BALANCE_ABI
-from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE
+from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, VIRTUALS_BASE
 from src.monitor.filter import SwapFilter
 from src.monitor.token_resolver import TokenResolver
 from src.monitor.watcher import AddressWatcher
@@ -46,7 +46,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
-STABLE_TOKENS = {USDC_BASE.lower(), USDT_BASE.lower()}
+STABLE_TOKENS = {USDC_BASE.lower(), USDT_BASE.lower(), VIRTUALS_BASE.lower()}
 
 
 def validate_runtime_config(cfg: Config) -> list[str]:

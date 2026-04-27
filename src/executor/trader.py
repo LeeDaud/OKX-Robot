@@ -384,16 +384,16 @@ class Trader:
         if "gas" in tx and isinstance(tx["gas"], int):
             tx["gas"] = int(tx["gas"] * GAS_LIMIT_MULTIPLIER)
 
-        nonce = await self._w3.eth.get_transaction_count(
-            AsyncWeb3.to_checksum_address(self._wallet)
-        )
+        checksum_wallet = AsyncWeb3.to_checksum_address(self._wallet)
+        tx["from"] = checksum_wallet
+        nonce = await self._w3.eth.get_transaction_count(checksum_wallet)
         tx["nonce"] = nonce
         tx["chainId"] = 8453
 
         # eth_call 模拟（借鉴 aidog-auto-buy-bot：广播前先模拟，发现 revert 及时止损）
         try:
             await self._w3.eth.call({
-                "from": AsyncWeb3.to_checksum_address(self._wallet),
+                "from": checksum_wallet,
                 "to": tx["to"],
                 "data": tx.get("data", ""),
                 "value": tx.get("value", 0),

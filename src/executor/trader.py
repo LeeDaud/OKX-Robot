@@ -1,6 +1,7 @@
 """
 跟单执行器：计算跟单金额 → 获取报价 → 签名 → 广播（或 dry-run 打印）。
 """
+import asyncio
 import logging
 from decimal import Decimal
 from typing import Optional
@@ -12,6 +13,37 @@ from src.executor.okx_client import OKXDexClient
 from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, WETH_BASE, VIRTUALS_BASE, TRANSFER_TOPIC
 
 logger = logging.getLogger(__name__)
+
+ERC20_SHORT_ABI = [
+    {
+        "name": "balanceOf",
+        "type": "function",
+        "inputs": [{"name": "account", "type": "address"}],
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+    },
+    {
+        "name": "allowance",
+        "type": "function",
+        "inputs": [{"name": "owner", "type": "address"}, {"name": "spender", "type": "address"}],
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+    },
+    {
+        "name": "approve",
+        "type": "function",
+        "inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "bool"}],
+        "stateMutability": "nonpayable",
+    },
+    {
+        "name": "decimals",
+        "type": "function",
+        "inputs": [],
+        "outputs": [{"name": "", "type": "uint8"}],
+        "stateMutability": "view",
+    },
+]
 
 ERC20_BALANCE_ABI = [
     {
@@ -162,6 +194,65 @@ class Trader:
         except Exception:
             return True  # 查询失败时不阻断
 
+    async def _check_and_approve(self, token_addr: str, spender: str, amount_needed: int) -> bool:
+        """检查 allowance，不够则返回 True 表示需要 approve。"""
+        try:
+            contract = self._w3.eth.contract(
+                address=AsyncWeb3.to_checksum_address(token_addr),
+                abi=ERC20_SHORT_ABI,
+            )
+            allow = await contract.functions.allowance(
+                AsyncWeb3.to_checksum_address(self._wallet),
+                AsyncWeb3.to_checksum_address(spender),
+            ).call()
+            if allow >= amount_needed:
+                logger.info("Allowance 充足 (%d >= %d), 跳过 approve", allow, amount_needed)
+                return False
+            logger.info("Allowance 不足 (%d < %d), 需要 approve", allow, amount_needed)
+            return True
+        except Exception as e:
+            logger.warning("检查 allowance 失败: %s", e)
+            return True  # 保守起见，查询失败时也 approve
+
+    async def _approve_and_wait(self, token_addr: str, spender: str, amount: int) -> bool:
+        """发送 approve 交易并等待确认。返回 True 表示成功。"""
+        try:
+            contract = self._w3.eth.contract(
+                address=AsyncWeb3.to_checksum_address(token_addr),
+                abi=ERC20_SHORT_ABI,
+            )
+            nonce = await self._w3.eth.get_transaction_count(
+                AsyncWeb3.to_checksum_address(self._wallet)
+            )
+            approve_tx = await contract.functions.approve(
+                AsyncWeb3.to_checksum_address(spender), amount
+            ).build_transaction({
+                "from": AsyncWeb3.to_checksum_address(self._wallet),
+                "nonce": nonce,
+                "gas": 100000,
+                "chainId": 8453,
+            })
+            signed = Account.sign_transaction(approve_tx, self._pk)
+            tx_hash = await self._w3.eth.send_raw_transaction(signed.raw_transaction)
+            logger.info("Approve 已发送: %s", tx_hash.hex()[:20])
+
+            for _ in range(30):
+                receipt = await self._w3.eth.get_transaction_receipt(tx_hash)
+                if receipt is not None:
+                    status = receipt.get("status")
+                    if status == 1:
+                        logger.info("Approve 确认成功")
+                        return True
+                    logger.warning("Approve 链上失败")
+                    return False
+                await asyncio.sleep(1)
+
+            logger.warning("Approve 30s 未确认")
+            return False
+        except Exception as e:
+            logger.warning("Approve 异常: %s", e)
+            return False
+
     async def _confirm_and_parse(self, tx_hash: str, target_token: str) -> int:
         """等待交易确认，返回实际收到的 target_token 数量（raw）。"""
         receipt = await self._wait_for_receipt(tx_hash)
@@ -228,7 +319,36 @@ class Trader:
         if tx_data is None:
             return None
 
+        # OKX V6 可能返回 dexTokenApproveAddress，需要先 approve 该地址
+        approve_addr = tx_data.get("dexTokenApproveAddress", "")
+        if approve_addr:
+            need_approve = await self._check_and_approve(
+                token_in, approve_addr, amount_in
+            )
+            if need_approve and not await self._approve_and_wait(token_in, approve_addr, amount_in):
+                logger.warning("[SKIP] approve 失败")
+                return None
+
         tx = tx_data.get("tx", {})
+        # OKX 返回的数字字段全是字符串，需要转 int
+        for key in ("gas", "gasPrice", "maxPriorityFeePerGas", "value", "maxFeePerGas"):
+            val = tx.get(key)
+            if val and str(val).isdigit():
+                tx[key] = int(val)
+        # 移除空字符串字段
+        for key in list(tx):
+            if isinstance(tx[key], str) and tx[key] == "":
+                del tx[key]
+        # EIP-1559 模式下需要 maxFeePerGas 和 maxPriorityFeePerGas
+        if "maxPriorityFeePerGas" in tx:
+            if "gasPrice" in tx:
+                tx["maxFeePerGas"] = int(tx["gasPrice"])
+                del tx["gasPrice"]
+            elif "maxFeePerGas" not in tx:
+                tx["maxFeePerGas"] = tx["maxPriorityFeePerGas"]
+        # OKX 附加字段，非交易字段，需要移除
+        for key in ("minReceiveAmount", "signatureData", "slippagePercent"):
+            tx.pop(key, None)
         nonce = await self._w3.eth.get_transaction_count(
             AsyncWeb3.to_checksum_address(self._wallet)
         )

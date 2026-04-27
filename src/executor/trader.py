@@ -390,18 +390,6 @@ class Trader:
         tx["nonce"] = nonce
         tx["chainId"] = 8453
 
-        # eth_call 模拟（借鉴 aidog-auto-buy-bot：广播前先模拟，发现 revert 及时止损）
-        try:
-            await self._w3.eth.call({
-                "from": checksum_wallet,
-                "to": tx["to"],
-                "data": tx.get("data", ""),
-                "value": tx.get("value", 0),
-            }, "latest")
-        except Exception as e:
-            logger.warning("[SIMULATION] eth_call failed, skip broadcast: %s", e)
-            return None
-
         signed = Account.sign_transaction(tx, self._pk)
         tx_hash = await self._w3.eth.send_raw_transaction(signed.raw_transaction)
         tx_hash_hex = tx_hash.hex()

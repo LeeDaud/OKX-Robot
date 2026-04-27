@@ -71,7 +71,7 @@ def _parse_received_amount(logs: list, target_token: str, wallet_addr: str) -> i
         if log.get("address", "").lower() != target_lower:
             continue
         to_addr = topics[2]
-        to_hex = (to_addr.hex() if isinstance(to_addr, bytes) else to_addr).lower()
+        to_hex = ("0x" + to_addr.hex() if isinstance(to_addr, bytes) else to_addr).lower()
         if to_hex != wallet_padded:
             continue
         data = log.get("data", b"")

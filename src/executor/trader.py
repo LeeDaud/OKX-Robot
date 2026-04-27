@@ -328,7 +328,7 @@ class Trader:
             if log["address"].lower() != target_lower:
                 continue
             to_addr = topics[2]
-            to_hex = (to_addr.hex() if isinstance(to_addr, bytes) else to_addr).lower()
+            to_hex = ("0x" + to_addr.hex() if isinstance(to_addr, bytes) else to_addr).lower()
             if to_hex != wallet_padded:
                 continue
             data = log.get("data", b"")

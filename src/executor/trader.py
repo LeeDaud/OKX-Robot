@@ -11,6 +11,7 @@ from eth_account import Account
 
 from src.executor.okx_client import OKXDexClient
 from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, WETH_BASE, VIRTUALS_BASE, TRANSFER_TOPIC
+from src.db.database import set_tx_pending
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,8 @@ ERC20_BALANCE_ABI = [
     },
 ]
 
+GAS_LIMIT_MULTIPLIER = 1.2
+
 class Trader:
     def __init__(
         self,
@@ -90,13 +93,14 @@ class Trader:
         self._dry_run = dry_run
         self.last_skip_reason = ""
 
-    async def execute(self, swap: SwapInfo) -> tuple[Optional[str], float, int]:
+    async def execute(self, swap: SwapInfo, source_tx: str = "") -> tuple[Optional[str], float, int]:
         """
         执行跟单。返回 (txhash, amount_usd, filled_amount_raw)。
         - 跳过时返回 (None, 0.0, 0)
         - dry-run 时返回 (None, 计算金额, 0)
         - 成功时返回 (txhash, 实际跟单金额, 实际收到 token 原始数量)
         买入时统一用 USDC 支付，卖出时沿用 swap.token_in。
+        source_tx 用于发交易后立即持久化 tx_hash，支持 crash 恢复。
         """
         self.last_skip_reason = ""
         is_buy = swap.token_out.lower() not in {
@@ -124,6 +128,14 @@ class Trader:
             logger.warning("[SKIP] %s", self.last_skip_reason)
             return (None, 0.0, 0)
 
+        # 报价安全校验（借鉴 aidog-auto-buy-bot）
+        try:
+            self._validate_quote(quote)
+        except ValueError as e:
+            self.last_skip_reason = f"报价校验不通过: {e}"
+            logger.warning("[SKIP] %s", self.last_skip_reason)
+            return (None, 0.0, 0)
+
         amount_usd = amount_in / 1e6
         to_amount = quote.get("toTokenAmount", "?")
         logger.info(
@@ -138,7 +150,8 @@ class Trader:
         if self._dry_run:
             return (None, amount_usd, 0)
 
-        tx_hash = await self._send_swap(payment_token, target_token, amount_in)
+        tx_hash = await self._send_swap(payment_token, target_token, amount_in,
+                                         source_tx=source_tx, stage="swap")
         filled_raw = 0
         if tx_hash:
             filled_raw = await self._confirm_and_parse(tx_hash, target_token)
@@ -193,6 +206,22 @@ class Trader:
             return True
         except Exception:
             return True  # 查询失败时不阻断
+
+    def _validate_quote(self, quote: dict) -> None:
+        """对 OKX 报价做安全校验，借鉴 aidog-auto-buy-bot 的风控模式。"""
+        to_token = quote.get("toToken", {}) or {}
+        from_token = quote.get("fromToken", {}) or {}
+
+        if to_token.get("isHoneyPot") or from_token.get("isHoneyPot"):
+            raise ValueError(f"Honeypot token detected: {quote.get('toTokenAddress', '?')}")
+
+        price_impact = abs(float(quote.get("priceImpactPercent", 0)))
+        if price_impact > 5.0:
+            raise ValueError(f"Price impact {price_impact:.1f}% exceeds 5% limit")
+
+        tax_rate = float(to_token.get("taxRate", 0))
+        if tax_rate > 0.05:
+            raise ValueError(f"Token tax rate {tax_rate*100:.1f}% exceeds 5% limit")
 
     async def _check_and_approve(self, token_addr: str, spender: str, amount_needed: int) -> bool:
         """检查 allowance，不够则返回 True 表示需要 approve。"""
@@ -312,7 +341,8 @@ class Trader:
             total += int.from_bytes(data_bytes[:32], "big")
         return total
 
-    async def _send_swap(self, token_in: str, token_out: str, amount_in: int) -> Optional[str]:
+    async def _send_swap(self, token_in: str, token_out: str, amount_in: int,
+                         source_tx: str = "", stage: str = "swap") -> Optional[str]:
         tx_data = await self._okx.build_swap_tx(
             token_in, token_out, amount_in, self._wallet, self._slippage
         )
@@ -349,18 +379,48 @@ class Trader:
         # OKX 附加字段，非交易字段，需要移除
         for key in ("minReceiveAmount", "signatureData", "slippagePercent"):
             tx.pop(key, None)
+
+        # Gas padding（借鉴 aidog-auto-buy-bot）
+        if "gas" in tx and isinstance(tx["gas"], int):
+            tx["gas"] = int(tx["gas"] * GAS_LIMIT_MULTIPLIER)
+
         nonce = await self._w3.eth.get_transaction_count(
             AsyncWeb3.to_checksum_address(self._wallet)
         )
         tx["nonce"] = nonce
         tx["chainId"] = 8453
 
+        # eth_call 模拟（借鉴 aidog-auto-buy-bot：广播前先模拟，发现 revert 及时止损）
+        try:
+            await self._w3.eth.call({
+                "from": self._wallet,
+                "to": tx["to"],
+                "data": tx.get("data", ""),
+                "value": tx.get("value", 0),
+            }, "latest")
+        except Exception as e:
+            logger.warning("[SIMULATION] eth_call failed, skip broadcast: %s", e)
+            return None
+
         signed = Account.sign_transaction(tx, self._pk)
         tx_hash = await self._w3.eth.send_raw_transaction(signed.raw_transaction)
-        return tx_hash.hex()
+        tx_hash_hex = tx_hash.hex()
 
-    async def sell(self, token_in: str, token_out: str, amount: int) -> Optional[str]:
-        """止盈卖出：将持仓代币换回稳定币。"""
+        # 发交易后立即持久化 tx_hash（借鉴 aidog-auto-buy-bot 的 pendingTx 机制）
+        if source_tx:
+            try:
+                await set_tx_pending(source_tx, tx_hash_hex, stage)
+                logger.info("[PERSIST] pending tx saved: source=%s tx=%s stage=%s",
+                            source_tx[:12], tx_hash_hex[:12], stage)
+            except Exception as e:
+                logger.warning("[PERSIST] failed to save pending tx: %s", e)
+
+        return tx_hash_hex
+
+    async def sell(self, token_in: str, token_out: str, amount: int,
+                   source_tx: str = "") -> Optional[str]:
+        """止盈/回购卖出：将持仓代币换回稳定币。
+        source_tx 用于发交易后立即持久化 tx_hash，支持 crash 恢复。"""
         self.last_skip_reason = ""
         if not await self._check_gas():
             self.last_skip_reason = f"Gas 过高（>{self._gas_limit_gwei} gwei）"
@@ -370,6 +430,14 @@ class Trader:
         quote = await self._okx.get_quote(token_in, token_out, amount, self._slippage)
         if quote is None:
             self.last_skip_reason = "OKX 无可用卖出报价路由"
+            logger.warning("[SKIP SELL] %s", self.last_skip_reason)
+            return None
+
+        # 报价安全校验
+        try:
+            self._validate_quote(quote)
+        except ValueError as e:
+            self.last_skip_reason = f"卖出报价校验不通过: {e}"
             logger.warning("[SKIP SELL] %s", self.last_skip_reason)
             return None
 
@@ -384,4 +452,5 @@ class Trader:
             self.last_skip_reason = "模拟运行模式"
             return None
 
-        return await self._send_swap(token_in, token_out, amount)
+        return await self._send_swap(token_in, token_out, amount,
+                                     source_tx=source_tx, stage="sell")

@@ -85,7 +85,7 @@ class TakeProfitMonitor:
             logger.warning("No trader for source_addr=%s, skipping take profit", pos.get("source_addr"))
             return
 
-        tx = await trader.sell(token, USDC_BASE, int(amount_out))
+        tx = await trader.sell(token, USDC_BASE, int(amount_out), source_tx=pos.get("source_tx", ""))
         pnl = current_usd - cost_usd
 
         await close_position(

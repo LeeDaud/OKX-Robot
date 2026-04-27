@@ -12,7 +12,9 @@
       "Bash(.venv/Scripts/python.exe -m pytest tests/ -x -v)",
       "WebFetch(domain:www.okx.com)",
       "Read(//c/Users/10159/DAAA-Project/**)",
-      "Bash(ls -la copytrade.db)"
+      "Bash(ls -la copytrade.db)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:gitclone.com)"
     ]
   }
 }

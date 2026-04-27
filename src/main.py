@@ -21,11 +21,12 @@ from src.db.database import (
     init_db, insert_trade, update_trade, update_trade_fill,
     get_today_pnl, get_today_stats, get_all_stats,
     get_open_positions, get_open_position_by_token, close_position,
+    get_pending_trades, confirm_tx, set_tx_pending,
     _amount_to_usd,
 )
 from src.executor.okx_client import OKXDexClient
 from src.executor.trader import Trader, ERC20_BALANCE_ABI
-from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, VIRTUALS_BASE
+from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, VIRTUALS_BASE, TRANSFER_TOPIC
 from src.monitor.filter import SwapFilter
 from src.monitor.token_resolver import TokenResolver
 from src.monitor.watcher import AddressWatcher
@@ -48,6 +49,40 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 STABLE_TOKENS = {USDC_BASE.lower(), USDT_BASE.lower(), VIRTUALS_BASE.lower()}
+
+TRANSFER_TOPIC_HEX = TRANSFER_TOPIC.lstrip("0x").lower() if isinstance(TRANSFER_TOPIC, str) else ""
+
+
+def _parse_received_amount(logs: list, target_token: str, wallet_addr: str) -> int:
+    """从 receipt logs 解析 target_token 转入钱包的总量（独立版，用于启动恢复）。"""
+    target_lower = target_token.lower()
+    wallet_padded = "0x" + "0" * 24 + wallet_addr[2:]
+    topic0_hex = TRANSFER_TOPIC_HEX
+
+    total = 0
+    for log in logs:
+        topics = log.get("topics", [])
+        if len(topics) < 3:
+            continue
+        raw = topics[0]
+        t0 = (raw.hex() if isinstance(raw, bytes) else raw).lstrip("0x").lower()
+        if t0 != topic0_hex:
+            continue
+        if log.get("address", "").lower() != target_lower:
+            continue
+        to_addr = topics[2]
+        to_hex = (to_addr.hex() if isinstance(to_addr, bytes) else to_addr).lower()
+        if to_hex != wallet_padded:
+            continue
+        data = log.get("data", b"")
+        if isinstance(data, bytes):
+            data_bytes = data
+        else:
+            data_bytes = bytes.fromhex(data[2:] if data.startswith("0x") else data)
+        if len(data_bytes) < 32:
+            continue
+        total += int.from_bytes(data_bytes[:32], "big")
+    return total
 
 
 def validate_runtime_config(cfg: Config) -> list[str]:
@@ -146,6 +181,38 @@ async def run(dry_run_override: bool | None = None) -> None:
 
     await init_db()
 
+    # 启动时恢复 pending 交易（借鉴 aidog-auto-buy-bot 的 pendingTx 恢复机制）
+    pending_trades = await get_pending_trades()
+    if pending_trades:
+        wallet_addr = cfg.wallet_address.lower()
+        logger.info("发现 %d 笔待恢复交易", len(pending_trades))
+        for pt in pending_trades:
+            tx_hash = pt.get("our_tx_hash", "")
+            if not tx_hash:
+                continue
+            try:
+                receipt = await w3.eth.get_transaction_receipt(tx_hash)
+                if receipt is None:
+                    logger.info("[RECOVER] %s: 交易尚未上链，跳过", tx_hash[:12])
+                    continue
+                if receipt.get("status") == 1:
+                    filled_raw = 0
+                    try:
+                        filled_raw = _parse_received_amount(
+                            [dict(log) for log in receipt.get("logs", [])],
+                            pt.get("token_out", ""),
+                            wallet_addr,
+                        )
+                    except Exception:
+                        pass
+                    await confirm_tx(pt["source_tx"], "success", str(filled_raw), pt.get("filled_cost_usd", 0))
+                    logger.info("[RECOVER] %s: 交易已确认，回填成交", tx_hash[:12])
+                else:
+                    await confirm_tx(pt["source_tx"], "failed", "0", 0)
+                    logger.warning("[RECOVER] %s: 交易链上失败", tx_hash[:12])
+            except Exception as e:
+                logger.warning("[RECOVER] %s: 恢复失败: %s", tx_hash[:12], e)
+
     guard = DailyLossGuard(limit_usd=cfg.daily_loss_limit_usd)
     today_pnl = await get_today_pnl()
     guard.record_pnl(today_pnl)
@@ -209,7 +276,8 @@ async def run(dry_run_override: bool | None = None) -> None:
                             token_to_sell = open_pos["token_out"]
                             sell_trader = traders.get(open_pos["source_addr"])
                             sell_tx = await sell_trader.sell(
-                                token_to_sell, USDC_BASE, sell_amount
+                                token_to_sell, USDC_BASE, sell_amount,
+                                source_tx=swap.tx_hash,
                             ) if sell_trader else None
 
                             if sell_tx:
@@ -297,7 +365,8 @@ async def run(dry_run_override: bool | None = None) -> None:
                             token_to_sell = open_pos["token_out"]
                             sell_trader = traders.get(swap.from_addr)
                             sell_tx = await sell_trader.sell(
-                                token_to_sell, USDC_BASE, sell_amount
+                                token_to_sell, USDC_BASE, sell_amount,
+                                source_tx=swap.tx_hash,
                             ) if sell_trader else None
 
                             if sell_tx:
@@ -358,7 +427,7 @@ async def run(dry_run_override: bool | None = None) -> None:
 
                 # 买入：走 execute（USDC 支付）；卖出：已在上面通过 trader.sell() 处理
                 if side == "buy":
-                    execute_result = await trader.execute(swap) if trader else None
+                    execute_result = await trader.execute(swap, source_tx=swap.tx_hash) if trader else None
                     our_tx_buy = execute_result[0] if execute_result else None
                     our_amount_usd_buy = execute_result[1] if execute_result else 0.0
                     filled_raw_buy = execute_result[2] if execute_result else 0

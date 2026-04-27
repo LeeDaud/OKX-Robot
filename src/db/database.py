@@ -54,6 +54,9 @@ MIGRATE_COLUMNS = [
     ("roi_pct",         "REAL DEFAULT 0"),
     ("filled_amount",   "TEXT"),
     ("filled_cost_usd", "REAL DEFAULT 0"),
+    ("our_tx_hash",     "TEXT DEFAULT ''"),
+    ("our_tx_sent_at",  "TEXT DEFAULT ''"),
+    ("our_tx_stage",    "TEXT DEFAULT ''"),
 ]
 
 
@@ -124,6 +127,53 @@ async def update_trade_fill(
                SET our_tx=?, status=?, filled_amount=?, filled_cost_usd=?
                WHERE source_tx=?""",
             (our_tx, status, filled_amount_raw, filled_cost_usd, source_tx),
+        )
+        await db.commit()
+
+
+async def set_tx_pending(
+    source_tx: str,
+    our_tx_hash: str,
+    stage: str,
+    path: str = DB_PATH,
+) -> None:
+    """发交易后立即写入 tx_hash 和阶段，用于 crash 恢复。"""
+    async with aiosqlite.connect(path) as db:
+        await db.execute(
+            """UPDATE copy_trades
+               SET our_tx_hash=?, our_tx_sent_at=?, our_tx_stage=?
+               WHERE source_tx=?""",
+            (our_tx_hash, datetime.now(timezone.utc).isoformat(), stage, source_tx),
+        )
+        await db.commit()
+
+
+async def get_pending_trades(path: str = DB_PATH) -> list[dict]:
+    """查询所有已发出跟单交易但尚未确认的记录。"""
+    async with aiosqlite.connect(path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM copy_trades
+               WHERE our_tx_hash != '' AND status='pending'
+               ORDER BY created_at ASC"""
+        ) as cur:
+            return [dict(row) async for row in cur]
+
+
+async def confirm_tx(
+    source_tx: str,
+    status: str,
+    filled_amount_raw: str = "0",
+    filled_cost_usd: float = 0.0,
+    path: str = DB_PATH,
+) -> None:
+    """确认 pending 交易：回填成交数据并更新状态。"""
+    async with aiosqlite.connect(path) as db:
+        await db.execute(
+            """UPDATE copy_trades
+               SET status=?, filled_amount=?, filled_cost_usd=?
+               WHERE source_tx=?""",
+            (status, filled_amount_raw, filled_cost_usd, source_tx),
         )
         await db.commit()
 

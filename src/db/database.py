@@ -46,12 +46,14 @@ CREATE TABLE IF NOT EXISTS copy_trades (
 """
 
 MIGRATE_COLUMNS = [
-    ("amount_out",  "REAL DEFAULT 0"),
-    ("side",        "TEXT DEFAULT 'buy'"),
-    ("position_id", "TEXT"),
-    ("entry_price", "REAL DEFAULT 0"),
-    ("exit_price",  "REAL DEFAULT 0"),
-    ("roi_pct",     "REAL DEFAULT 0"),
+    ("amount_out",      "REAL DEFAULT 0"),
+    ("side",            "TEXT DEFAULT 'buy'"),
+    ("position_id",     "TEXT"),
+    ("entry_price",     "REAL DEFAULT 0"),
+    ("exit_price",      "REAL DEFAULT 0"),
+    ("roi_pct",         "REAL DEFAULT 0"),
+    ("filled_amount",   "TEXT"),
+    ("filled_cost_usd", "REAL DEFAULT 0"),
 ]
 
 
@@ -103,6 +105,25 @@ async def update_trade(
         await db.execute(
             "UPDATE copy_trades SET our_tx=?, status=?, pnl=? WHERE source_tx=?",
             (our_tx, status, pnl, source_tx),
+        )
+        await db.commit()
+
+
+async def update_trade_fill(
+    source_tx: str,
+    our_tx: str,
+    status: str,
+    filled_amount_raw: str,
+    filled_cost_usd: float,
+    path: str = DB_PATH,
+) -> None:
+    """回填机器人实际成交数据（覆盖目标报价估算）。"""
+    async with aiosqlite.connect(path) as db:
+        await db.execute(
+            """UPDATE copy_trades
+               SET our_tx=?, status=?, filled_amount=?, filled_cost_usd=?
+               WHERE source_tx=?""",
+            (our_tx, status, filled_amount_raw, filled_cost_usd, source_tx),
         )
         await db.commit()
 

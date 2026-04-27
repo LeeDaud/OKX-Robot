@@ -31,6 +31,8 @@ class Config:
     okx_passphrase: str
     # 跟单目标（含各自独立配置）
     copy_targets: list[TargetConfig]
+    # 回购地址簿：回购地址 → 目标代币地址
+    buyback_watch: dict[str, str]
     # 全局跟单金额
     trade_mode: str
     trade_ratio: float
@@ -70,8 +72,10 @@ def _parse_targets(raw: list) -> list[TargetConfig]:
 
 
 def _parse_yaml(y: dict) -> dict:
+    raw_buyback = y.get("buyback_watch", {}) or {}
     return dict(
         copy_targets=_parse_targets(y.get("copy_targets", [])),
+        buyback_watch={k.lower(): v.lower() for k, v in raw_buyback.items()},
         trade_mode=y.get("trade_mode", "ratio"),
         trade_ratio=float(y.get("trade_ratio", 0.10)),
         trade_fixed_usd=float(y.get("trade_fixed_usd", 50)),

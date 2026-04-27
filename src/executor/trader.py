@@ -9,7 +9,7 @@ from web3 import AsyncWeb3
 from eth_account import Account
 
 from src.executor.okx_client import OKXDexClient
-from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, WETH_BASE, VIRTUALS_BASE
+from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, WETH_BASE, VIRTUALS_BASE, TRANSFER_TOPIC
 
 logger = logging.getLogger(__name__)
 
@@ -56,15 +56,17 @@ class Trader:
         self._slippage = slippage
         self._gas_limit_gwei = gas_limit_gwei
         self._dry_run = dry_run
+        self.last_skip_reason = ""
 
-    async def execute(self, swap: SwapInfo) -> tuple[Optional[str], float]:
+    async def execute(self, swap: SwapInfo) -> tuple[Optional[str], float, int]:
         """
-        执行跟单。返回 (txhash, amount_usd)。
-        - 跳过时返回 (None, 0.0)
-        - dry-run 时返回 (None, 计算金额)
-        - 成功时返回 (txhash, 实际跟单金额)
+        执行跟单。返回 (txhash, amount_usd, filled_amount_raw)。
+        - 跳过时返回 (None, 0.0, 0)
+        - dry-run 时返回 (None, 计算金额, 0)
+        - 成功时返回 (txhash, 实际跟单金额, 实际收到 token 原始数量)
         买入时统一用 USDC 支付，卖出时沿用 swap.token_in。
         """
+        self.last_skip_reason = ""
         is_buy = swap.token_out.lower() not in {
             USDC_BASE.lower(), USDT_BASE.lower(), VIRTUALS_BASE.lower(),
         }
@@ -73,19 +75,22 @@ class Trader:
 
         amount_in = await self._calculate_amount()
         if amount_in is None or amount_in <= 0:
-            logger.info("[SKIP] Insufficient balance or amount too small")
-            return (None, 0.0)
+            self.last_skip_reason = "USDC 余额不足或金额太小"
+            logger.info("[SKIP] %s", self.last_skip_reason)
+            return (None, 0.0, 0)
 
         if not await self._check_gas():
-            logger.info("[SKIP] Gas price too high")
-            return (None, 0.0)
+            self.last_skip_reason = f"Gas 过高（>{self._gas_limit_gwei} gwei）"
+            logger.info("[SKIP] %s", self.last_skip_reason)
+            return (None, 0.0, 0)
 
         quote = await self._okx.get_quote(
             payment_token, target_token, amount_in, self._slippage
         )
         if quote is None:
-            logger.warning("[SKIP] Failed to get quote")
-            return (None, 0.0)
+            self.last_skip_reason = "OKX 无可用买入报价路由"
+            logger.warning("[SKIP] %s", self.last_skip_reason)
+            return (None, 0.0, 0)
 
         amount_usd = amount_in / 1e6
         to_amount = quote.get("toTokenAmount", "?")
@@ -99,10 +104,13 @@ class Trader:
         )
 
         if self._dry_run:
-            return (None, amount_usd)
+            return (None, amount_usd, 0)
 
         tx_hash = await self._send_swap(payment_token, target_token, amount_in)
-        return (tx_hash, amount_usd)
+        filled_raw = 0
+        if tx_hash:
+            filled_raw = await self._confirm_and_parse(tx_hash, target_token)
+        return (tx_hash, amount_usd, filled_raw)
 
     async def _calculate_amount(self) -> Optional[int]:
         """
@@ -154,6 +162,65 @@ class Trader:
         except Exception:
             return True  # 查询失败时不阻断
 
+    async def _confirm_and_parse(self, tx_hash: str, target_token: str) -> int:
+        """等待交易确认，返回实际收到的 target_token 数量（raw）。"""
+        receipt = await self._wait_for_receipt(tx_hash)
+        if receipt is None:
+            logger.warning("[FILL] Receipt not found for %s", tx_hash[:10])
+            return 0
+        if receipt.get("status") != 1:
+            logger.warning("[FILL] Tx failed on-chain: %s", tx_hash[:10])
+            return 0
+        filled = self._parse_received_amount(receipt.get("logs", []), target_token)
+        if filled > 0:
+            logger.info("[FILL] %s received %s raw of %s", tx_hash[:10], filled, target_token[:10])
+        else:
+            logger.warning("[FILL] %s no Transfer events for %s to wallet", tx_hash[:10], target_token[:10])
+        return filled
+
+    async def _wait_for_receipt(self, tx_hash: str, max_wait: int = 30) -> Optional[dict]:
+        """轮询等待交易收据，最多 max_wait 秒。"""
+        for _ in range(max_wait * 2):
+            try:
+                receipt = await self._w3.eth.get_transaction_receipt(tx_hash)
+                if receipt is not None:
+                    return dict(receipt)
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+        return None
+
+    def _parse_received_amount(self, logs: list, target_token: str) -> int:
+        """从 receipt logs 中解析 target_token 转入本钱包的总量。"""
+        target_lower = target_token.lower()
+        wallet_padded = "0x" + "0" * 24 + self._wallet[2:]
+        transfer_topic = TRANSFER_TOPIC.lstrip("0x").lower()
+
+        total = 0
+        for log in logs:
+            topics = log.get("topics", [])
+            if len(topics) < 3:
+                continue
+            raw = topics[0]
+            topic0 = (raw.hex() if isinstance(raw, bytes) else raw).lstrip("0x").lower()
+            if topic0 != transfer_topic:
+                continue
+            if log["address"].lower() != target_lower:
+                continue
+            to_addr = topics[2]
+            to_hex = (to_addr.hex() if isinstance(to_addr, bytes) else to_addr).lower()
+            if to_hex != wallet_padded:
+                continue
+            data = log.get("data", b"")
+            if isinstance(data, bytes):
+                data_bytes = data
+            else:
+                data_bytes = bytes.fromhex(data[2:] if data.startswith("0x") else data)
+            if len(data_bytes) < 32:
+                continue
+            total += int.from_bytes(data_bytes[:32], "big")
+        return total
+
     async def _send_swap(self, token_in: str, token_out: str, amount_in: int) -> Optional[str]:
         tx_data = await self._okx.build_swap_tx(
             token_in, token_out, amount_in, self._wallet, self._slippage
@@ -174,13 +241,16 @@ class Trader:
 
     async def sell(self, token_in: str, token_out: str, amount: int) -> Optional[str]:
         """止盈卖出：将持仓代币换回稳定币。"""
+        self.last_skip_reason = ""
         if not await self._check_gas():
-            logger.info("[SKIP SELL] Gas too high")
+            self.last_skip_reason = f"Gas 过高（>{self._gas_limit_gwei} gwei）"
+            logger.info("[SKIP SELL] %s", self.last_skip_reason)
             return None
 
         quote = await self._okx.get_quote(token_in, token_out, amount, self._slippage)
         if quote is None:
-            logger.warning("[SKIP SELL] Failed to get quote")
+            self.last_skip_reason = "OKX 无可用卖出报价路由"
+            logger.warning("[SKIP SELL] %s", self.last_skip_reason)
             return None
 
         logger.info(
@@ -191,6 +261,7 @@ class Trader:
         )
 
         if self._dry_run:
+            self.last_skip_reason = "模拟运行模式"
             return None
 
         return await self._send_swap(token_in, token_out, amount)

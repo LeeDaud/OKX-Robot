@@ -156,6 +156,7 @@ class FeishuNotifier:
         pnl_usd: float | None = None,
         balance_usdc: float = 0.0,
         balance_eth: float = 0.0,
+        skip_reason: str = "",
     ) -> None:
         now_cst = datetime.now(CST).strftime("%m-%d %H:%M")
 
@@ -170,7 +171,16 @@ class FeishuNotifier:
             title = f"📉 卖出 {symbol_in}  {sign}${pnl_usd:.0f}" if pnl_usd is not None else f"📉 卖出 {symbol_in}"
 
         mode_tag = "🔵 DRY-RUN" if dry_run else "🟢 LIVE"
-        status_val = f"✅ {our_tx[:12]}..." if our_tx else ("📋 模拟" if dry_run else "❌ 失败")
+
+        if our_tx:
+            status_val = f"✅ {our_tx[:12]}..."
+        elif skip_reason:
+            status_val = f"❌ {skip_reason}"
+        elif dry_run:
+            status_val = "📋 模拟"
+        else:
+            status_val = "❌ 执行失败"
+
         view_token = token_out if side == "buy" else token_in
 
         elements = [

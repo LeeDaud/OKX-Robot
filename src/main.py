@@ -18,7 +18,7 @@ from web3 import AsyncWeb3
 
 from src.config.loader import load_config, reload_yaml, TargetConfig, Config
 from src.db.database import (
-    init_db, insert_trade, update_trade,
+    init_db, insert_trade, update_trade, update_trade_fill,
     get_today_pnl, get_today_stats, get_all_stats,
     get_open_positions, get_open_position_by_token, close_position,
     _amount_to_usd,
@@ -186,6 +186,86 @@ async def run(dry_run_override: bool | None = None) -> None:
                 exit_usd = 0.0
                 roi_pct = None
                 pnl_usd = None
+                skip_reason = ""
+
+                # ── 回购检测：回购地址买入指定代币 → 立即卖出对应持仓 ──
+                buyback_target = cfg.buyback_watch.get(swap.from_addr.lower())
+                if buyback_target and side == "buy" and swap.token_out.lower() == buyback_target:
+                    open_pos = await get_open_position_by_token(buyback_target)
+                    sell_tx = None
+                    if open_pos:
+                        filled_raw_pos = open_pos.get("filled_amount")
+                        if filled_raw_pos:
+                            sell_amount = int(filled_raw_pos)
+                            cost_basis = open_pos.get("filled_cost_usd", 0.0)
+                        else:
+                            sell_amount = int(open_pos.get("amount_out", 0))
+                            cost_basis = _amount_to_usd(
+                                open_pos.get("amount_in", 0),
+                                open_pos.get("token_in", USDC_BASE),
+                            )
+
+                        if sell_amount > 0 and cost_basis > 0:
+                            token_to_sell = open_pos["token_out"]
+                            sell_trader = traders.get(open_pos["source_addr"])
+                            sell_tx = await sell_trader.sell(
+                                token_to_sell, USDC_BASE, sell_amount
+                            ) if sell_trader else None
+
+                            if sell_tx:
+                                pnl = round(-cost_basis, 2)
+                                roi = -100.0
+                                exit_quote = await okx.get_quote(
+                                    token_to_sell, USDC_BASE, sell_amount
+                                )
+                                if exit_quote:
+                                    exit_usd = float(exit_quote.get("toTokenAmount", 0)) / 1e6
+                                if exit_usd > 0:
+                                    pnl = round(exit_usd - cost_basis, 2)
+                                    roi = round((pnl / cost_basis * 100) if cost_basis > 0 else 0, 2)
+                                    await close_position(open_pos["position_id"], exit_usd, roi, pnl)
+                                else:
+                                    await close_position(open_pos["position_id"], 0, 0, -cost_basis)
+
+                                await update_trade(swap.tx_hash, sell_tx, "success")
+
+                    # 录入原始交易
+                    await insert_trade(
+                        swap.tx_hash, swap.from_addr,
+                        swap.token_in, swap.token_out, swap.amount_in,
+                        side="buy", position_id=open_pos["position_id"] if open_pos else None,
+                    )
+
+                    # 通知：回购地址买入检测 + 卖出结果
+                    sym_in, sym_out = await asyncio.gather(
+                        token_resolver.symbol(swap.token_in),
+                        token_resolver.symbol(swap.token_out),
+                    )
+                    if sell_tx:
+                        pnl_display = pnl if exit_usd > 0 else -cost_basis
+                        roi_display = roi if exit_usd > 0 else -100.0
+                        await notifier.notify_trade(
+                            swap.tx_hash, sym_in, f"🔄回购{sym_out}",
+                            swap.token_in, swap.token_out,
+                            exit_usd if exit_usd > 0 else 0, "USDC",
+                            sell_tx, cfg.dry_run,
+                            side="sell", roi_pct=roi_display, pnl_usd=pnl_display,
+                            balance_usdc=0, balance_eth=0,
+                            skip_reason="",
+                        )
+                        logger.info("Buyback sell sent: %s | token=%s", sell_tx, buyback_target[:10])
+                    else:
+                        reason = "模拟运行模式" if cfg.dry_run else (
+                            sell_trader.last_skip_reason if open_pos and sell_trader else "无持仓或持仓为空"
+                        )
+                        await notifier.notify_trade(
+                            swap.tx_hash, sym_in, sym_out,
+                            swap.token_in, swap.token_out,
+                            0, "USDC", None, cfg.dry_run,
+                            side="sell", balance_usdc=0, balance_eth=0,
+                            skip_reason=reason,
+                        )
+                    return  # skip normal flow
 
                 if side == "buy":
                     position_id = str(uuid.uuid4())
@@ -196,20 +276,54 @@ async def run(dry_run_override: bool | None = None) -> None:
                         cost = _amount_to_usd(swap.amount_in, swap.token_in)
                         entry_price = cost / amount_out if amount_out > 0 else 0
                 else:
-                    # 卖出：匹配最近未平仓买入，计算 ROI
+                    # 卖出：匹配持仓，用机器人实际数量跟卖
                     open_pos = await get_open_position_by_token(swap.token_in)
                     if open_pos:
                         position_id = open_pos["position_id"]
-                        cost_usd = _amount_to_usd(open_pos["amount_in"], open_pos["token_in"])
-                        exit_usd = 0.0
-                        # 查出场价值
-                        quote = await okx.get_quote(swap.token_in, USDC_BASE, swap.amount_in)
-                        if quote:
-                            exit_usd = float(quote.get("toTokenAmount", 0)) / 1e6
-                        if exit_usd > 0:
-                            pnl_usd = exit_usd - cost_usd
-                            roi_pct = (pnl_usd / cost_usd * 100) if cost_usd > 0 else 0
-                            await close_position(position_id, exit_usd, roi_pct, pnl_usd)
+
+                        # 用机器人实际持仓数量卖出
+                        filled_raw_pos = open_pos.get("filled_amount")
+                        if filled_raw_pos:
+                            sell_amount = int(filled_raw_pos)
+                            cost_basis = open_pos.get("filled_cost_usd", 0.0)
+                        else:
+                            sell_amount = int(open_pos.get("amount_out", 0))
+                            cost_basis = _amount_to_usd(
+                                open_pos.get("amount_in", 0),
+                                open_pos.get("token_in", USDC_BASE),
+                            )
+
+                        if sell_amount > 0 and cost_basis > 0:
+                            token_to_sell = open_pos["token_out"]
+                            sell_trader = traders.get(swap.from_addr)
+                            sell_tx = await sell_trader.sell(
+                                token_to_sell, USDC_BASE, sell_amount
+                            ) if sell_trader else None
+
+                            if sell_tx:
+                                our_tx = sell_tx
+                                # 查真实出场价值
+                                exit_quote = await okx.get_quote(
+                                    token_to_sell, USDC_BASE, sell_amount
+                                )
+                                if exit_quote:
+                                    exit_usd = float(exit_quote.get("toTokenAmount", 0)) / 1e6
+                                if exit_usd > 0:
+                                    pnl_usd = exit_usd - cost_basis
+                                    roi_pct = (pnl_usd / cost_basis * 100) if cost_basis > 0 else 0
+                                    await close_position(position_id, exit_usd, roi_pct, pnl_usd)
+                                    our_amount_usd = exit_usd
+                                else:
+                                    # 查价失败也平仓，防止止盈监控二次卖出
+                                    await close_position(position_id, 0, 0, -cost_basis)
+
+                                await update_trade(swap.tx_hash, sell_tx, "success")
+                            elif sell_trader:
+                                skip_reason = sell_trader.last_skip_reason or "卖出交易广播失败"
+                        else:
+                            skip_reason = "持仓数量为空或成本基础为 0"
+                    else:
+                        skip_reason = "未匹配到对应持仓"
 
                 await insert_trade(
                     swap.tx_hash, swap.from_addr,
@@ -241,11 +355,34 @@ async def run(dry_run_override: bool | None = None) -> None:
                 )
 
                 trader = traders.get(swap.from_addr)
-                execute_result = await trader.execute(swap) if trader else None
-                our_tx = execute_result[0] if execute_result else None
-                our_amount_usd = execute_result[1] if execute_result else 0.0
-                status = "success" if our_tx else ("dry_run" if cfg.dry_run else "failed")
-                await update_trade(swap.tx_hash, our_tx, status)
+
+                # 买入：走 execute（USDC 支付）；卖出：已在上面通过 trader.sell() 处理
+                if side == "buy":
+                    execute_result = await trader.execute(swap) if trader else None
+                    our_tx_buy = execute_result[0] if execute_result else None
+                    our_amount_usd_buy = execute_result[1] if execute_result else 0.0
+                    filled_raw_buy = execute_result[2] if execute_result else 0
+
+                    if our_tx_buy and filled_raw_buy > 0:
+                        await update_trade_fill(
+                            swap.tx_hash, our_tx_buy, "success",
+                            str(filled_raw_buy), our_amount_usd_buy,
+                        )
+                        our_tx = our_tx_buy
+                        our_amount_usd = our_amount_usd_buy
+                    elif our_tx_buy:
+                        await update_trade(swap.tx_hash, our_tx_buy, "success")
+                        our_tx = our_tx_buy
+                    else:
+                        if trader:
+                            skip_reason = trader.last_skip_reason or "买入交易执行失败"
+                        await update_trade(swap.tx_hash, None,
+                                           "dry_run" if cfg.dry_run else "failed")
+                else:
+                    # 卖出如果未产生 our_tx（无持仓/量太小/skip），更新 DB 状态
+                    if not our_tx:
+                        await update_trade(swap.tx_hash, None,
+                                           "dry_run" if cfg.dry_run else "failed")
 
                 # 先发 swap alert（无论是否自动跟单都通知）
                 await notifier.notify_swap_alert(
@@ -273,6 +410,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                         notify_amount, notify_unit, our_tx, cfg.dry_run,
                         side=side, roi_pct=roi_pct, pnl_usd=pnl_usd,
                         balance_usdc=balance_usdc, balance_eth=balance_eth,
+                        skip_reason=skip_reason,
                     )
 
                 if our_tx:
@@ -400,7 +538,7 @@ async def run(dry_run_override: bool | None = None) -> None:
 
         watcher = AddressWatcher(
             w3=w3,
-            targets=[t.address for t in cfg.copy_targets],
+            targets=list(set([t.address for t in cfg.copy_targets] + list(cfg.buyback_watch.keys()))),
             on_swap=on_swap,
             swap_filter=swap_filter,
             poll_interval=cfg.poll_interval_sec,

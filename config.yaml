@@ -1,6 +1,13 @@
 # 跟单目标地址列表（每个地址可独立覆盖全局跟单金额配置）
 copy_targets:
-  - address: "0xe56761c7681aa5cb414b57ba8d23577d30cdf466"
+  # - address: "0xe56761c7681aa5cb414b57ba8d23577d30cdf466"
+  - address: "0xe4d5be169574fc9e18edaa813790f079e1630b6d"
+
+# 回购地址簿：回购地址买入指定代币时，立即卖出对应持仓
+# 格式："回购地址": "代币地址"
+buyback_watch:
+  # "0xREPO_ADDRESS": "0xTOKEN_ADDRESS"
+    "0x9Bda49389B29Fa4E204eD9De8f3d7d06f84dA171": "0xc2bceb0ee69455da32abb10a5ba81c0299a925c8"
     # trade_mode: fixed     # 不填则继承全局
     # trade_fixed_usd: 30
     # trade_max_usd: 100

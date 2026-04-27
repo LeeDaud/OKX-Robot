@@ -50,8 +50,15 @@ class TakeProfitMonitor:
 
     async def _evaluate(self, pos: dict) -> None:
         token = pos["token_out"]
-        amount_out = pos.get("amount_out", 0)
-        cost_usd = _amount_to_usd(pos.get("amount_in", 0), pos.get("token_in", USDC_BASE))
+
+        # 优先使用机器人实际成交数据，旧记录 fallback 到目标报价估算
+        filled_raw = pos.get("filled_amount")
+        if filled_raw:
+            amount_out = int(filled_raw)
+            cost_usd = pos.get("filled_cost_usd", 0.0)
+        else:
+            amount_out = pos.get("amount_out", 0)
+            cost_usd = _amount_to_usd(pos.get("amount_in", 0), pos.get("token_in", USDC_BASE))
 
         if not token or amount_out <= 0 or cost_usd <= 0:
             return

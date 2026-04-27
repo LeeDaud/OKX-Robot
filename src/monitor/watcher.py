@@ -119,7 +119,8 @@ class AddressWatcher:
 
             swap = decode_swap_from_logs(tx_hash, from_addr, logs, block_number, tx_value)
             if swap is None:
-                logger.info("[SKIP] %s: no swap detected in logs (%d logs)", tx_hash[:10], len(logs))
+                logger.info("[SKIP] %s: no swap detected in logs (%d logs, from_addr=%s)",
+                            tx_hash[:10], len(logs), from_addr[:12])
                 return
 
             swap = await self._resolve_pool_tokens(swap)
@@ -166,7 +167,7 @@ class AddressWatcher:
     @staticmethod
     def _addr_from_topic(topic) -> str:
         raw = topic.hex() if isinstance(topic, bytes) else topic
-        return "0x" + raw.lstrip("0x")[-40:].lower()
+        return "0x" + raw[-40:].lower()
 
     async def _resolve_pool_tokens(self, swap: SwapInfo) -> SwapInfo | None:
         token_in = swap.token_in

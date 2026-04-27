@@ -75,9 +75,15 @@ def decode_swap_from_logs(
         v2 = UNISWAP_V2_SWAP_TOPIC.lstrip("0x").lower()
 
         if topic0 == v3:
-            return _decode_v3_swap(tx_hash, from_addr, log, block_number)
+            result = _decode_v3_swap(tx_hash, from_addr, log, block_number)
+            if result is not None:
+                return result
+            continue
         if topic0 == v2:
-            return _decode_v2_swap(tx_hash, from_addr, log, block_number)
+            result = _decode_v2_swap(tx_hash, from_addr, log, block_number)
+            if result is not None:
+                return result
+            continue
 
     return _decode_swap_from_transfers(tx_hash, from_addr, logs, block_number, tx_value)
 
@@ -133,7 +139,7 @@ def _decode_v3_swap(
 
 def _topic_to_addr(topic) -> str:
     raw = topic.hex() if isinstance(topic, bytes) else topic
-    return "0x" + raw.lstrip("0x")[-40:].lower()
+    return "0x" + raw[-40:].lower()
 
 
 def _decode_v2_swap(

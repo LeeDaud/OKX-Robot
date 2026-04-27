@@ -69,7 +69,7 @@ class Trader:
             USDC_BASE.lower(), USDT_BASE.lower(), VIRTUALS_BASE.lower(),
         }
         payment_token = USDC_BASE if is_buy else swap.token_in
-        target_token = swap.token_out if is_buy else swap.token_in
+        target_token = swap.token_out if is_buy else USDC_BASE
 
         amount_in = await self._calculate_amount()
         if amount_in is None or amount_in <= 0:

@@ -254,6 +254,8 @@ async def run(dry_run_override: bool | None = None) -> None:
                 roi_pct = None
                 pnl_usd = None
                 skip_reason = ""
+                our_tx = None
+                our_amount_usd = 0.0
 
                 # ── 回购检测：回购地址买入指定代币 → 立即卖出对应持仓 ──
                 buyback_target = cfg.buyback_watch.get(swap.from_addr.lower())

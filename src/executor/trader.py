@@ -393,7 +393,7 @@ class Trader:
         # eth_call 模拟（借鉴 aidog-auto-buy-bot：广播前先模拟，发现 revert 及时止损）
         try:
             await self._w3.eth.call({
-                "from": self._wallet,
+                "from": AsyncWeb3.to_checksum_address(self._wallet),
                 "to": tx["to"],
                 "data": tx.get("data", ""),
                 "value": tx.get("value", 0),

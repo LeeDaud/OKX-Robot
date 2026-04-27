@@ -125,7 +125,7 @@ class FeishuNotifier:
         card = {
             "config": {"wide_screen_mode": True},
             "header": {
-                "title": {"tag": "plain_text", "content": f"👀 {symbol_in} → {symbol_out}"},
+                "title": {"tag": "plain_text", "content": f"{symbol_in} → {symbol_out}"},
                 "template": color,
             },
             "elements": [
@@ -162,11 +162,11 @@ class FeishuNotifier:
 
         if side == "buy":
             color = "green"
-            title = f"⚡ 买入 {symbol_in} → {symbol_out}"
+            title = f"⚡ {symbol_in} → {symbol_out}"
         else:
             color = "red" if (pnl_usd or 0) < 0 else "orange"
             sign = "+" if (pnl_usd or 0) >= 0 else ""
-            title = f"📉 卖出 {symbol_in} → USDC" + (f"  {sign}${pnl_usd:.0f}" if pnl_usd is not None else "")
+            title = f"📉 {symbol_in} → {symbol_out}" + (f"  {sign}${pnl_usd:.0f}" if pnl_usd is not None else "")
 
         mode_tag = "🔵 DRY-RUN" if dry_run else "🟢 LIVE"
 

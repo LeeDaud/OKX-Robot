@@ -111,8 +111,6 @@ class FeishuNotifier:
         auto_followed: bool,
     ) -> None:
         now_cst = datetime.now(CST).strftime("%m-%d %H:%M")
-        direction = "买入" if side == "buy" else "卖出"
-        token_display = symbol_out if side == "buy" else symbol_in
         view_token = token_out if side == "buy" else token_in
 
         if auto_followed:
@@ -127,7 +125,7 @@ class FeishuNotifier:
         card = {
             "config": {"wide_screen_mode": True},
             "header": {
-                "title": {"tag": "plain_text", "content": f"👀 跟单钱包 {direction}  {token_display}"},
+                "title": {"tag": "plain_text", "content": f"👀 {symbol_in} → {symbol_out}"},
                 "template": color,
             },
             "elements": [
@@ -164,11 +162,11 @@ class FeishuNotifier:
 
         if side == "buy":
             color = "green"
-            title = f"⚡ 买入 {symbol_out}  {amount_str}"
+            title = f"⚡ 买入 {symbol_in} → {symbol_out}"
         else:
             color = "red" if (pnl_usd or 0) < 0 else "orange"
             sign = "+" if (pnl_usd or 0) >= 0 else ""
-            title = f"📉 卖出 {symbol_in}  {sign}${pnl_usd:.0f}" if pnl_usd is not None else f"📉 卖出 {symbol_in}"
+            title = f"📉 卖出 {symbol_in} → USDC" + (f"  {sign}${pnl_usd:.0f}" if pnl_usd is not None else "")
 
         mode_tag = "🔵 DRY-RUN" if dry_run else "🟢 LIVE"
 

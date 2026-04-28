@@ -153,6 +153,7 @@ class FeishuNotifier:
         roi_pct: float | None = None,
         pnl_usd: float | None = None,
         balance_usdc: float = 0.0,
+        balance_virtual: float = 0.0,
         balance_eth: float = 0.0,
         skip_reason: str = "",
     ) -> None:
@@ -192,7 +193,11 @@ class FeishuNotifier:
                 self._two_col("收益率", f"{sign}{roi_pct:.1f}%", "盈亏", f"{sign}${pnl_usd:.2f}")
             )
 
-        elements.append(self._two_col("状态", status_val, "余额", f"${balance_usdc:.2f} USDC"))
+        if balance_virtual > 0:
+            balance_str = f"{balance_virtual:.2f} VIRTUAL"
+        else:
+            balance_str = f"${balance_usdc:.2f} USDC"
+        elements.append(self._two_col("状态", status_val, "余额", balance_str))
 
         if balance_eth < 0.001:
             elements.append(self._md("⚠️ **ETH 余额不足，请及时补充 gas**"))
@@ -243,10 +248,11 @@ class FeishuNotifier:
         self,
         balance_usdc: float,
         balance_eth: float,
-        unrealized_pnl: float,
-        realized_pnl: float,
-        total_invested: float,
-        positions: list[dict],
+        balance_virtual: float = 0.0,
+        unrealized_pnl: float = 0.0,
+        realized_pnl: float = 0.0,
+        total_invested: float = 0.0,
+        positions: list[dict] = [],
         today_trades: int | None = None,
         today_success: int | None = None,
         today_pnl: float | None = None,
@@ -256,8 +262,15 @@ class FeishuNotifier:
         rea_sign = "+" if realized_pnl >= 0 else ""
         now_cst = datetime.now(CST).strftime("%Y-%m-%d %H:%M")
 
+        if balance_virtual > 0:
+            balance_label = "VIRTUAL 余额"
+            balance_str = f"{balance_virtual:.2f} VIRTUAL"
+        else:
+            balance_label = "USDC 余额"
+            balance_str = f"${balance_usdc:.2f}"
+
         elements = [
-            self._two_col("USDC 余额", f"${balance_usdc:.2f}", "ETH 余额", f"{balance_eth:.5f}"),
+            self._two_col(balance_label, balance_str, "ETH 余额", f"{balance_eth:.5f}"),
         ]
         if balance_eth < 0.001:
             elements.append(self._md("⚠️ **ETH 余额不足，请及时补充 gas**"))

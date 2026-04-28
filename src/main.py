@@ -90,14 +90,18 @@ def validate_runtime_config(cfg: Config) -> list[str]:
 
     if not cfg.copy_targets:
         issues.append("copy_targets must contain at least one address")
+    if cfg.base_token not in {"VIRTUAL", "USDC"}:
+        issues.append(f"base_token must be 'VIRTUAL' or 'USDC', got '{cfg.base_token}'")
     if cfg.trade_mode not in {"ratio", "fixed"}:
         issues.append(f"trade_mode must be 'ratio' or 'fixed', got '{cfg.trade_mode}'")
-    if cfg.trade_ratio < 0:
-        issues.append("trade_ratio must be >= 0")
-    if cfg.trade_fixed_usd < 0:
-        issues.append("trade_fixed_usd must be >= 0")
+    if cfg.trade_ratio <= 0:
+        issues.append("trade_ratio must be > 0")
+    if cfg.trade_fixed_usd <= 0:
+        issues.append("trade_fixed_usd must be > 0")
     if cfg.trade_max_usd < 0:
         issues.append("trade_max_usd must be >= 0")
+    if cfg.trade_fixed_virtuals <= 0:
+        issues.append("trade_fixed_virtuals must be > 0")
     if cfg.min_trade_usd < 0:
         issues.append("min_trade_usd must be >= 0")
     if cfg.daily_loss_limit_usd < 0:
@@ -153,9 +157,10 @@ def check_config() -> None:
         raise SystemExit(1)
 
     logger.info(
-        "Config check passed | dry_run=%s | targets=%d | trade_mode=%s | poll_interval=%.1fs",
+        "Config check passed | dry_run=%s | targets=%d | base_token=%s | trade_mode=%s | poll_interval=%.1fs",
         cfg.dry_run,
         len(cfg.copy_targets),
+        cfg.base_token,
         cfg.trade_mode,
         cfg.poll_interval_sec,
     )
@@ -219,6 +224,9 @@ async def run(dry_run_override: bool | None = None) -> None:
 
     notifier = FeishuNotifier(cfg.feishu_webhook_url)
 
+    base_address = VIRTUALS_BASE if cfg.base_token == "VIRTUAL" else USDC_BASE
+    base_symbol = cfg.base_token
+
     w3 = RPCRouter(cfg.rpc_http_url, cfg.rpc_http_url_fallback)
     swap_filter = SwapFilter(cfg.token_whitelist, cfg.min_trade_usd)
     token_resolver = TokenResolver(w3)
@@ -228,10 +236,12 @@ async def run(dry_run_override: bool | None = None) -> None:
             w3=w3, okx=okx,
             wallet_addr=cfg.wallet_address,
             private_key=cfg.private_key,
+            base_token=cfg.base_token,
             trade_mode=target.trade_mode or cfg.trade_mode,
             trade_ratio=target.trade_ratio if target.trade_ratio is not None else cfg.trade_ratio,
             trade_fixed_usd=target.trade_fixed_usd if target.trade_fixed_usd is not None else cfg.trade_fixed_usd,
             trade_max_usd=target.trade_max_usd if target.trade_max_usd is not None else cfg.trade_max_usd,
+            trade_fixed_virtuals=target.trade_fixed_virtuals if target.trade_fixed_virtuals is not None else cfg.trade_fixed_virtuals,
             slippage=cfg.slippage,
             gas_limit_gwei=cfg.gas_limit_gwei,
             dry_run=cfg.dry_run,
@@ -271,20 +281,21 @@ async def run(dry_run_override: bool | None = None) -> None:
                             sell_amount = int(open_pos.get("amount_out", 0))
                             cost_basis = _amount_to_usd(
                                 open_pos.get("amount_in", 0),
-                                open_pos.get("token_in", USDC_BASE),
+                                open_pos.get("token_in", base_address),
                             )
 
                         if sell_amount > 0 and cost_basis > 0:
                             token_to_sell = open_pos["token_out"]
                             sell_trader = traders.get(open_pos["source_addr"])
                             sell_tx = await sell_trader.sell(
-                                token_to_sell, USDC_BASE, sell_amount,
+                                token_to_sell, base_address, sell_amount,
                                 source_tx=swap.tx_hash,
                             ) if sell_trader else None
 
                             if sell_tx:
                                 pnl = round(-cost_basis, 2)
                                 roi = -100.0
+                                # PnL 估值始终用 USDC（≈USD）
                                 exit_quote = await okx.get_quote(
                                     token_to_sell, USDC_BASE, sell_amount
                                 )
@@ -314,26 +325,30 @@ async def run(dry_run_override: bool | None = None) -> None:
                     if sell_tx:
                         pnl_display = pnl if exit_usd > 0 else -cost_basis
                         roi_display = roi if exit_usd > 0 else -100.0
+                        balance_kw = {"balance_virtual": 0} if cfg.base_token == "VIRTUAL" else {"balance_usdc": 0}
                         await notifier.notify_trade(
                             swap.tx_hash, sym_in, f"🔄回购{sym_out}",
                             swap.token_in, swap.token_out,
-                            exit_usd if exit_usd > 0 else 0, "USDC",
+                            exit_usd if exit_usd > 0 else 0, base_symbol,
                             sell_tx, cfg.dry_run,
                             side="sell", roi_pct=roi_display, pnl_usd=pnl_display,
-                            balance_usdc=0, balance_eth=0,
+                            balance_eth=0,
                             skip_reason="",
+                            **balance_kw,
                         )
                         logger.info("Buyback sell sent: %s | token=%s", sell_tx, buyback_target[:10])
                     else:
                         reason = "模拟运行模式" if cfg.dry_run else (
                             sell_trader.last_skip_reason if open_pos and sell_trader else "无持仓或持仓为空"
                         )
+                        balance_kw = {"balance_virtual": 0} if cfg.base_token == "VIRTUAL" else {"balance_usdc": 0}
                         await notifier.notify_trade(
                             swap.tx_hash, sym_in, sym_out,
                             swap.token_in, swap.token_out,
-                            0, "USDC", None, cfg.dry_run,
-                            side="sell", balance_usdc=0, balance_eth=0,
+                            0, base_symbol, None, cfg.dry_run,
+                            side="sell", balance_eth=0,
                             skip_reason=reason,
+                            **balance_kw,
                         )
                     return  # skip normal flow
 
@@ -360,20 +375,20 @@ async def run(dry_run_override: bool | None = None) -> None:
                             sell_amount = int(open_pos.get("amount_out", 0))
                             cost_basis = _amount_to_usd(
                                 open_pos.get("amount_in", 0),
-                                open_pos.get("token_in", USDC_BASE),
+                                open_pos.get("token_in", base_address),
                             )
 
                         if sell_amount > 0 and cost_basis > 0:
                             token_to_sell = open_pos["token_out"]
                             sell_trader = traders.get(swap.from_addr)
                             sell_tx = await sell_trader.sell(
-                                token_to_sell, USDC_BASE, sell_amount,
+                                token_to_sell, base_address, sell_amount,
                                 source_tx=swap.tx_hash,
                             ) if sell_trader else None
 
                             if sell_tx:
                                 our_tx = sell_tx
-                                # 查真实出场价值
+                                # PnL 估值始终用 USDC（≈USD）
                                 exit_quote = await okx.get_quote(
                                     token_to_sell, USDC_BASE, sell_amount
                                 )
@@ -465,23 +480,32 @@ async def run(dry_run_override: bool | None = None) -> None:
 
                 # 如果有自动跟单结果，再发跟单详情
                 if trader is not None:
-                    usdc_raw, eth_raw = await asyncio.gather(
-                        w3.eth.call({"to": AsyncWeb3.to_checksum_address(USDC_BASE),
-                                     "data": "0x70a08231" + "000000000000000000000000" + cfg.wallet_address[2:].lower()}),
+                    base_token_addr = base_address
+                    base_contract = w3.eth.contract(
+                        address=AsyncWeb3.to_checksum_address(base_token_addr),
+                        abi=ERC20_BALANCE_ABI,
+                    )
+                    base_raw, eth_raw = await asyncio.gather(
+                        base_contract.functions.balanceOf(
+                            AsyncWeb3.to_checksum_address(cfg.wallet_address)
+                        ).call(),
                         w3.eth.get_balance(AsyncWeb3.to_checksum_address(cfg.wallet_address)),
                     )
-                    balance_usdc = int(usdc_raw.hex(), 16) / 1e6
+                    base_decimals = 18 if cfg.base_token == "VIRTUAL" else 6
+                    balance_base = base_raw / (10 ** base_decimals)
                     balance_eth = eth_raw / 1e18
                     # 自动跟单时显示实际跟单金额，否则显示跟单钱包金额
                     notify_amount = our_amount_usd if our_amount_usd > 0 else amount_display
-                    notify_unit = "USDC" if our_amount_usd > 0 else amount_unit
+                    notify_unit = base_symbol if our_amount_usd > 0 else amount_unit
+                    balance_kw = {"balance_virtual": balance_base} if cfg.base_token == "VIRTUAL" else {"balance_usdc": balance_base}
                     await notifier.notify_trade(
                         swap.tx_hash, symbol_in, symbol_out,
                         swap.token_in, swap.token_out,
                         notify_amount, notify_unit, our_tx, cfg.dry_run,
                         side=side, roi_pct=roi_pct, pnl_usd=pnl_usd,
-                        balance_usdc=balance_usdc, balance_eth=balance_eth,
+                        balance_eth=balance_eth,
                         skip_reason=skip_reason,
+                        **balance_kw,
                     )
 
                 if our_tx:
@@ -498,7 +522,8 @@ async def run(dry_run_override: bool | None = None) -> None:
                     swap.tx_hash, sym_in, sym_out,
                     swap.token_in, swap.token_out,
                     swap.amount_in / 1e18, "TOKEN", None, cfg.dry_run,
-                    side="?", balance_usdc=0, balance_eth=0,
+                    side="?", balance_eth=0,
+                    **({"balance_virtual": 0} if cfg.base_token == "VIRTUAL" else {"balance_usdc": 0}),
                 )
 
         async def on_take_profit(pos: dict, roi: float, pnl: float) -> None:
@@ -517,13 +542,14 @@ async def run(dry_run_override: bool | None = None) -> None:
                         trader._ratio = (target.trade_ratio if target and target.trade_ratio is not None else cfg.trade_ratio)
                         trader._fixed_usd = (target.trade_fixed_usd if target and target.trade_fixed_usd is not None else cfg.trade_fixed_usd)
                         trader._max_usd = (target.trade_max_usd if target and target.trade_max_usd is not None else cfg.trade_max_usd)
+                        trader._fixed_virtuals = (target.trade_fixed_virtuals if target and target.trade_fixed_virtuals is not None else cfg.trade_fixed_virtuals)
                         trader._slippage = cfg.slippage
                         trader._dry_run = cfg.dry_run
                     guard._limit = cfg.daily_loss_limit_usd
                     tp_monitor._roi_threshold = cfg.take_profit_roi
                     tp_monitor._interval = cfg.take_profit_check_sec
-                    logger.info("Config reloaded: mode=%s ratio=%.2f tp_roi=%.0f%%",
-                                cfg.trade_mode, cfg.trade_ratio, cfg.take_profit_roi * 100)
+                    logger.info("Config reloaded: base_token=%s mode=%s ratio=%.2f tp_roi=%.0f%%",
+                                cfg.base_token, cfg.trade_mode, cfg.trade_ratio, cfg.take_profit_roi * 100)
                 except Exception as e:
                     logger.warning("Config reload failed: %s", e)
 
@@ -543,15 +569,16 @@ async def run(dry_run_override: bool | None = None) -> None:
                 logger.info("Hourly reporter: woke up, generating report...")
                 try:
                     fire_hour = datetime.now(timezone.utc).hour
-                    contract = w3.eth.contract(
-                        address=AsyncWeb3.to_checksum_address(USDC_BASE),
+                    base_decimals = 18 if cfg.base_token == "VIRTUAL" else 6
+                    base_contract = w3.eth.contract(
+                        address=AsyncWeb3.to_checksum_address(base_address),
                         abi=ERC20_BALANCE_ABI,
                     )
                     raw_balance, eth_raw = await asyncio.gather(
-                        contract.functions.balanceOf(AsyncWeb3.to_checksum_address(cfg.wallet_address)).call(),
+                        base_contract.functions.balanceOf(AsyncWeb3.to_checksum_address(cfg.wallet_address)).call(),
                         w3.eth.get_balance(AsyncWeb3.to_checksum_address(cfg.wallet_address)),
                     )
-                    balance_usdc = raw_balance / 1e6
+                    balance_base = raw_balance / (10 ** base_decimals)
                     balance_eth = eth_raw / 1e18
 
                     open_pos = await get_open_positions()
@@ -560,7 +587,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                     for pos in open_pos:
                         token = pos["token_out"]
                         amount_out = pos.get("amount_out", 0)
-                        cost_usd = _amount_to_usd(pos.get("amount_in", 0), pos.get("token_in", USDC_BASE))
+                        cost_usd = _amount_to_usd(pos.get("amount_in", 0), pos.get("token_in", base_address))
                         current_usd = cost_usd
                         roi = 0.0
                         if amount_out > 0:
@@ -586,7 +613,8 @@ async def run(dry_run_override: bool | None = None) -> None:
                         today_pnl = today["pnl"]
 
                     await notifier.notify_hourly_report(
-                        balance_usdc=balance_usdc,
+                        balance_usdc=balance_base,
+                        balance_virtual=balance_base if cfg.base_token == "VIRTUAL" else 0,
                         balance_eth=balance_eth,
                         unrealized_pnl=unrealized_pnl,
                         realized_pnl=stats["realized_pnl"],

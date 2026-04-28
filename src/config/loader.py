@@ -10,10 +10,11 @@ from dotenv import load_dotenv
 @dataclass
 class TargetConfig:
     address: str
-    trade_mode: str | None = None
+    trade_mode: str | None = None          # 不填则继承全局
     trade_ratio: float | None = None
     trade_fixed_usd: float | None = None
     trade_max_usd: float | None = None
+    trade_fixed_virtuals: float | None = None
 
 
 @dataclass
@@ -33,11 +34,15 @@ class Config:
     copy_targets: list[TargetConfig]
     # 回购地址簿：回购地址 → 目标代币地址
     buyback_watch: dict[str, str]
-    # 全局跟单金额
-    trade_mode: str
-    trade_ratio: float
-    trade_fixed_usd: float
-    trade_max_usd: float
+    # 基础代币（VIRTUAL | USDC），决定交易支付/收款代币
+    base_token: str
+    # 跟单金额（USDC 模式）
+    trade_mode: str               # ratio | fixed
+    trade_ratio: float            # ratio 模式：空闲 USDC 余额的百分比
+    trade_fixed_usd: float        # fixed 模式：每笔固定金额（USDC）
+    trade_max_usd: float          # 单笔上限（两种模式都生效，0 = 不限）
+    # 跟单金额（VIRTUAL 模式）
+    trade_fixed_virtuals: float   # 每笔固定 VIRTUAL 数量
     # 过滤
     token_whitelist: list[str]
     min_trade_usd: float
@@ -64,11 +69,18 @@ def _parse_targets(raw: list) -> list[TargetConfig]:
             result.append(TargetConfig(
                 address=item["address"].lower(),
                 trade_mode=item.get("trade_mode"),
-                trade_ratio=float(item["trade_ratio"]) if "trade_ratio" in item else None,
-                trade_fixed_usd=float(item["trade_fixed_usd"]) if "trade_fixed_usd" in item else None,
-                trade_max_usd=float(item["trade_max_usd"]) if "trade_max_usd" in item else None,
+                trade_ratio=_maybe_float(item.get("trade_ratio")),
+                trade_fixed_usd=_maybe_float(item.get("trade_fixed_usd")),
+                trade_max_usd=_maybe_float(item.get("trade_max_usd")),
+                trade_fixed_virtuals=_maybe_float(item.get("trade_fixed_virtuals")),
             ))
     return result
+
+
+def _maybe_float(v) -> float | None:
+    if v is None:
+        return None
+    return float(v)
 
 
 def _parse_yaml(y: dict) -> dict:
@@ -76,10 +88,12 @@ def _parse_yaml(y: dict) -> dict:
     return dict(
         copy_targets=_parse_targets(y.get("copy_targets", [])),
         buyback_watch={k.lower(): v.lower() for k, v in raw_buyback.items()},
-        trade_mode=y.get("trade_mode", "ratio"),
-        trade_ratio=float(y.get("trade_ratio", 0.10)),
+        base_token=str(y.get("base_token", "USDC")).upper(),
+        trade_mode=str(y.get("trade_mode", "ratio")),
+        trade_ratio=float(y.get("trade_ratio", 0.5)),
         trade_fixed_usd=float(y.get("trade_fixed_usd", 50)),
-        trade_max_usd=float(y.get("trade_max_usd", 0)),
+        trade_max_usd=float(y.get("trade_max_usd", 100)),
+        trade_fixed_virtuals=float(y.get("trade_fixed_virtuals", 30)),
         token_whitelist=[t.lower() for t in y.get("token_whitelist", [])],
         min_trade_usd=float(y.get("min_trade_usd", 0)),
         daily_loss_limit_usd=float(y.get("daily_loss_limit_usd", 50)),

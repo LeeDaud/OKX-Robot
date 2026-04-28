@@ -10,7 +10,7 @@ from web3 import AsyncWeb3
 from eth_account import Account
 
 from src.executor.okx_client import OKXDexClient
-from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, WETH_BASE, VIRTUALS_BASE, TRANSFER_TOPIC
+from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, VIRTUALS_BASE, TRANSFER_TOPIC
 from src.db.database import set_tx_pending
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,9 @@ ERC20_BALANCE_ABI = [
 
 GAS_LIMIT_MULTIPLIER = 1.2
 
+STABLE_TOKENS = {USDC_BASE.lower(), USDT_BASE.lower(), VIRTUALS_BASE.lower()}
+
+
 class Trader:
     def __init__(
         self,
@@ -72,10 +75,12 @@ class Trader:
         okx: OKXDexClient,
         wallet_addr: str,
         private_key: str,
+        base_token: str,
         trade_mode: str,
         trade_ratio: float,
         trade_fixed_usd: float,
         trade_max_usd: float,
+        trade_fixed_virtuals: float,
         slippage: float,
         gas_limit_gwei: float,
         dry_run: bool,
@@ -84,14 +89,24 @@ class Trader:
         self._okx = okx
         self._wallet = wallet_addr.lower()
         self._pk = private_key
+        self._base_token = base_token.upper()
         self._mode = trade_mode
         self._ratio = trade_ratio
         self._fixed_usd = trade_fixed_usd
         self._max_usd = trade_max_usd
+        self._fixed_virtuals = trade_fixed_virtuals
         self._slippage = slippage
         self._gas_limit_gwei = gas_limit_gwei
         self._dry_run = dry_run
         self.last_skip_reason = ""
+
+    @property
+    def _base_address(self) -> str:
+        return VIRTUALS_BASE if self._base_token == "VIRTUAL" else USDC_BASE
+
+    @property
+    def _base_decimals(self) -> int:
+        return 18 if self._base_token == "VIRTUAL" else 6
 
     async def execute(self, swap: SwapInfo, source_tx: str = "") -> tuple[Optional[str], float, int]:
         """
@@ -99,19 +114,17 @@ class Trader:
         - 跳过时返回 (None, 0.0, 0)
         - dry-run 时返回 (None, 计算金额, 0)
         - 成功时返回 (txhash, 实际跟单金额, 实际收到 token 原始数量)
-        买入时统一用 USDC 支付，卖出时沿用 swap.token_in。
+        支付代币由 base_token 配置决定（VIRTUAL 或 USDC）。
         source_tx 用于发交易后立即持久化 tx_hash，支持 crash 恢复。
         """
         self.last_skip_reason = ""
-        is_buy = swap.token_out.lower() not in {
-            USDC_BASE.lower(), USDT_BASE.lower(), VIRTUALS_BASE.lower(),
-        }
-        payment_token = USDC_BASE if is_buy else swap.token_in
-        target_token = swap.token_out if is_buy else USDC_BASE
+        is_buy = swap.token_out.lower() not in STABLE_TOKENS
+        payment_token = self._base_address if is_buy else swap.token_in
+        target_token = swap.token_out if is_buy else self._base_address
 
         amount_in = await self._calculate_amount()
         if amount_in is None or amount_in <= 0:
-            self.last_skip_reason = "USDC 余额不足或金额太小"
+            self.last_skip_reason = f"{self._base_token} 余额不足或金额太小"
             logger.info("[SKIP] %s", self.last_skip_reason)
             return (None, 0.0, 0)
 
@@ -128,7 +141,7 @@ class Trader:
             logger.warning("[SKIP] %s", self.last_skip_reason)
             return (None, 0.0, 0)
 
-        # 报价安全校验（借鉴 aidog-auto-buy-bot）
+        # 报价安全校验
         try:
             self._validate_quote(quote)
         except ValueError as e:
@@ -136,52 +149,68 @@ class Trader:
             logger.warning("[SKIP] %s", self.last_skip_reason)
             return (None, 0.0, 0)
 
-        amount_usd = amount_in / 1e6
+        amount_base = amount_in / (10 ** self._base_decimals)
         to_amount = quote.get("toTokenAmount", "?")
         logger.info(
-            "[%s] %s -> %s | amount_in=%d (%.2f USDC) | expected_out=%s",
+            "[%s] %s -> %s | amount_in=%d (%.2f %s) | expected_out=%s",
             "DRY-RUN" if self._dry_run else "LIVE",
             payment_token[:10],
             target_token[:10],
-            amount_in, amount_usd,
+            amount_in, amount_base, self._base_token,
             to_amount,
         )
 
         if self._dry_run:
-            return (None, amount_usd, 0)
+            return (None, amount_base, 0)
 
         tx_hash = await self._send_swap(payment_token, target_token, amount_in,
                                          source_tx=source_tx, stage="swap")
         filled_raw = 0
         if tx_hash:
             filled_raw = await self._confirm_and_parse(tx_hash, target_token)
-        return (tx_hash, amount_usd, filled_raw)
+        return (tx_hash, amount_base, filled_raw)
 
     async def _calculate_amount(self) -> Optional[int]:
+        """根据 base_token 计算跟单金额。
+        VIRTUAL 模式：固定 fixed_virtuals 个 VIRTUAL。
+        USDC 模式：根据 trade_mode (ratio/fixed) 计算 USDC 数量。
         """
-        ratio 模式：空闲 USDC 余额 × ratio
-        fixed 模式：固定 trade_fixed_usd
-        两种模式都受 trade_max_usd 上限约束。
-        统一使用 USDC 计算。
-        """
-        balance = await self._get_token_balance(USDC_BASE)
-        if balance is None:
-            return None
+        if self._base_token == "VIRTUAL":
+            balance = await self._get_token_balance(VIRTUALS_BASE)
+            if balance is None:
+                return None
 
-        if self._mode == "fixed":
-            amount = int(Decimal(str(self._fixed_usd)) * Decimal("1e6"))
+            amount = int(Decimal(str(self._fixed_virtuals)) * Decimal("1e18"))
+            if balance < amount:
+                self.last_skip_reason = (
+                    f"VIRTUAL 余额不足: {balance / 1e18:.2f} < {self._fixed_virtuals}"
+                )
+                return None
+            return amount
         else:
-            amount = int(Decimal(str(balance)) * Decimal(str(self._ratio)))
+            # USDC 模式
+            balance = await self._get_token_balance(USDC_BASE)
+            if balance is None:
+                return None
 
-        # 单笔上限
-        if self._max_usd > 0:
-            cap = int(Decimal(str(self._max_usd)) * Decimal("1e6"))
-            amount = min(amount, cap)
+            usdc_balance = balance / 1e6
+            if usdc_balance <= 0:
+                self.last_skip_reason = f"USDC 余额为 0"
+                return None
 
-        # 不能超过实际余额
-        amount = min(amount, balance)
+            if self._mode == "ratio":
+                amount = int(usdc_balance * self._ratio)
+            else:  # fixed
+                amount = self._fixed_usd
 
-        return amount if amount > 0 else None
+            if self._max_usd > 0:
+                amount = min(amount, self._max_usd)
+
+            if amount <= 0:
+                self.last_skip_reason = f"计算金额 <= 0: mode={self._mode} amount={amount}"
+                return None
+
+            return int(amount * 1e6)
 
     async def _get_token_balance(self, token_addr: str) -> Optional[int]:
         try:

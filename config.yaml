@@ -16,11 +16,17 @@ buyback_watch:
 token_whitelist: []          # 只跟单白名单内的 token（空列表 = 不限制）
 min_trade_usd: 0             # 被跟单地址交易额低于此值时跳过（0 = 不限制，单位 USDC）
 
-# 跟单金额
+# 基础代币（VIRTUAL | USDC），决定买入支付代币和卖出收款代币
+base_token: VIRTUAL
+
+# 跟单金额（USDC 模式）
 trade_mode: ratio          # ratio | fixed
 trade_ratio: 0.50          # ratio 模式：空闲 USDC 余额的百分比
 trade_fixed_usd: 50        # fixed 模式：每笔固定金额（USDC）
 trade_max_usd: 100         # 单笔上限（两种模式都生效，0 = 不限）
+
+# 跟单金额（VIRTUAL 模式）
+trade_fixed_virtuals: 30   # 每笔固定 VIRTUAL 数量
 
 # 风控
 daily_loss_limit_usd: 10   # 每日最大亏损（USDC），超过后停止跟单

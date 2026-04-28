@@ -9,7 +9,9 @@ from src.monitor.decoder import (
 )
 
 
-def _make_v3_log(pool_addr: str, amount0: int, amount1: int) -> dict:
+def _make_v3_log(pool_addr: str, amount0: int, amount1: int,
+                 sender: str = "0x1111111111111111111111111111111111111111",
+                 recipient: str = "0x2222222222222222222222222222222222222222") -> dict:
     def to_signed_bytes(n: int) -> bytes:
         return n.to_bytes(32, "big", signed=True)
 
@@ -17,26 +19,42 @@ def _make_v3_log(pool_addr: str, amount0: int, amount1: int) -> dict:
             b"\x00" * 96)  # sqrtPriceX96, liquidity, tick
     return {
         "address": pool_addr,
-        "topics": [bytes.fromhex(UNISWAP_V3_SWAP_TOPIC)],
+        "topics": [
+            bytes.fromhex(UNISWAP_V3_SWAP_TOPIC),
+            bytes.fromhex(sender[2:].zfill(64)),
+            bytes.fromhex(recipient[2:].zfill(64)),
+        ],
         "data": "0x" + data.hex(),
     }
 
 
-def _make_v2_log(pool_addr: str, a0in: int, a1in: int, a0out: int, a1out: int) -> dict:
+def _make_v2_log(pool_addr: str, a0in: int, a1in: int, a0out: int, a1out: int,
+                 sender: str = "0x1111111111111111111111111111111111111111",
+                 to: str = "0x2222222222222222222222222222222222222222") -> dict:
     def u256(n: int) -> bytes:
         return n.to_bytes(32, "big")
 
     data = u256(a0in) + u256(a1in) + u256(a0out) + u256(a1out)
     return {
         "address": pool_addr,
-        "topics": [bytes.fromhex(UNISWAP_V2_SWAP_TOPIC)],
+        "topics": [
+            bytes.fromhex(UNISWAP_V2_SWAP_TOPIC),
+            bytes.fromhex(sender[2:].zfill(64)),
+            bytes.fromhex(to[2:].zfill(64)),
+        ],
         "data": "0x" + data.hex(),
     }
 
 
+SENDER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+RECIPIENT = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+MONITORED = SENDER  # 假设监控地址是 sender
+
+
 def test_v3_swap_amount0_positive():
-    log = _make_v3_log("0xPool1", amount0=1000, amount1=-900)
-    result = decode_swap_from_logs("0xabc", "0xfrom", [log], 100)
+    log = _make_v3_log("0xPool1", amount0=1000, amount1=-900,
+                       sender=SENDER, recipient=RECIPIENT)
+    result = decode_swap_from_logs("0xabc", MONITORED, [log], 100)
     assert result is not None
     assert result.amount_in == 1000
     assert result.amount_out == 900
@@ -45,8 +63,9 @@ def test_v3_swap_amount0_positive():
 
 
 def test_v3_swap_amount1_positive():
-    log = _make_v3_log("0xPool2", amount0=-500, amount1=600)
-    result = decode_swap_from_logs("0xdef", "0xfrom", [log], 101)
+    log = _make_v3_log("0xPool2", amount0=-500, amount1=600,
+                       sender=SENDER, recipient=RECIPIENT)
+    result = decode_swap_from_logs("0xdef", MONITORED, [log], 101)
     assert result is not None
     assert result.amount_in == 600
     assert result.amount_out == 500
@@ -54,8 +73,9 @@ def test_v3_swap_amount1_positive():
 
 
 def test_v2_swap_token0_in():
-    log = _make_v2_log("0xPool3", a0in=200, a1in=0, a0out=0, a1out=180)
-    result = decode_swap_from_logs("0x111", "0xfrom", [log], 102)
+    log = _make_v2_log("0xPool3", a0in=200, a1in=0, a0out=0, a1out=180,
+                       sender=SENDER, to=RECIPIENT)
+    result = decode_swap_from_logs("0x111", MONITORED, [log], 102)
     assert result is not None
     assert result.amount_in == 200
     assert result.amount_out == 180

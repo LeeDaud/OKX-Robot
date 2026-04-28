@@ -38,7 +38,7 @@ async def test_trade_buy_card_structure(notifier):
     card = mock.call_args[0][0]
     assert card["msg_type"] if "msg_type" in card else True  # card itself
     assert card["header"]["template"] == "green"
-    assert "买入" in card["header"]["title"]["content"]
+    assert "USDC" in card["header"]["title"]["content"]
     assert "VIRTUAL" in card["header"]["title"]["content"]
     # 有查看代币按钮
     buttons = [e for e in card["elements"] if e.get("tag") == "action"]
@@ -64,7 +64,7 @@ async def test_trade_sell_profit_card(notifier):
     )
     card = mock.call_args[0][0]
     assert card["header"]["template"] == "orange"
-    assert "卖出" in card["header"]["title"]["content"]
+    assert "VIRTUAL" in card["header"]["title"]["content"]
     # 有收益率列
     cols = [e for e in card["elements"] if e.get("tag") == "column_set"]
     col_texts = str(cols)
@@ -202,7 +202,7 @@ async def test_swap_alert_auto_followed(notifier):
         50.0, "USDC", "buy", auto_followed=True,
     )
     card = mock.call_args[0][0]
-    assert "买入" in card["header"]["title"]["content"]
+    assert "USDC" in card["header"]["title"]["content"]
     assert "VIRTUAL" in card["header"]["title"]["content"]
     texts = str(card["elements"])
     assert "已自动跟单" in texts

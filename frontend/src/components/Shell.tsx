@@ -117,9 +117,8 @@ function TopBar({ onCycleSidebar, onOpenMobile }: { onCycleSidebar: () => void; 
             {theme === "light" ? <MoonStar className="size-4" /> : <SunMedium className="size-4" />}
             {theme === "light" ? "深色模式" : "浅色模式"}
           </Button>
-          <Button variant="outline" onClick={() => queryClient.invalidateQueries()}>
+          <Button variant="outline" onClick={() => queryClient.refetchQueries({ type: 'active' })}>
             <RefreshCcw className="size-4" />
-            刷新
           </Button>
         </div>
       </div>

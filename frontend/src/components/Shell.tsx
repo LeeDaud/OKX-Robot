@@ -95,6 +95,7 @@ function SidebarPanel({ mode }: { mode: "expanded" | "rail" }) {
 function TopBar({ onCycleSidebar, onOpenMobile }: { onCycleSidebar: () => void; onOpenMobile: () => void }) {
   const { theme, toggleTheme } = useTheme();
   const queryClient = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
 
   return (
     <Card className="surface-glass sticky top-4 z-20 rounded-[28px] p-4">
@@ -118,8 +119,9 @@ function TopBar({ onCycleSidebar, onOpenMobile }: { onCycleSidebar: () => void; 
             {theme === "light" ? <MoonStar className="size-4" /> : <SunMedium className="size-4" />}
             {theme === "light" ? "深色模式" : "浅色模式"}
           </Button>
-          <Button variant="outline" onClick={async () => { await queryClient.refetchQueries({ type: 'active' }); toast.success("数据已刷新"); }}>
-            <RefreshCcw className="size-4" />
+          <Button variant="outline" disabled={refreshing} onClick={async () => { setRefreshing(true); await queryClient.refetchQueries({ type: 'active' }); setRefreshing(false); toast.success("数据已刷新"); }}>
+            <RefreshCcw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "刷新中..." : "刷新"}
           </Button>
         </div>
       </div>

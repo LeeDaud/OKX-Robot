@@ -129,7 +129,7 @@ export default function Positions() {
         title="持仓管理"
         description="当前持仓与历史持仓概览"
         actions={
-          <Button onClick={handleRefresh} disabled={refreshing}>
+          <Button variant="outline" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
             {refreshing ? "刷新中..." : "刷新报价"}
           </Button>

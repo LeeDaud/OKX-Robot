@@ -59,6 +59,7 @@ class Config:
     # 运行
     dry_run: bool
     poll_interval_sec: float
+    trade_retry: int = 0             # 跟单失败重试次数（0 = 不重试）
 
 
 def _parse_targets(raw: list) -> list[TargetConfig]:
@@ -171,6 +172,7 @@ def _parse_yaml(y: dict) -> dict:
         daily_report_hour_utc=int(y.get("daily_report_hour_utc", 16)),
         dry_run=bool(y.get("dry_run", True)),
         poll_interval_sec=float(y.get("poll_interval_sec", 2)),
+        trade_retry=int(y.get("trade_retry", 0)),
     )
 
 

@@ -84,6 +84,7 @@ class Trader:
         slippage: float,
         gas_limit_gwei: float,
         dry_run: bool,
+        trade_retry: int = 0,
     ) -> None:
         self._w3 = w3
         self._okx = okx
@@ -98,6 +99,7 @@ class Trader:
         self._slippage = slippage
         self._gas_limit_gwei = gas_limit_gwei
         self._dry_run = dry_run
+        self._trade_retry = trade_retry
         self.last_skip_reason = ""
 
     @property
@@ -156,25 +158,68 @@ class Trader:
             return (None, 0.0, 0)
 
         amount_base = amount_in / (10 ** self._base_decimals)
-        to_amount = quote.get("toTokenAmount", "?")
-        logger.info(
-            "[%s] %s -> %s | amount_in=%d (%.2f %s) | expected_out=%s",
-            "DRY-RUN" if self._dry_run else "LIVE",
-            payment_token[:10],
-            target_token[:10],
-            amount_in, amount_base, self._base_token,
-            to_amount,
-        )
+        max_attempts = 1 + self._trade_retry
 
-        if self._dry_run:
-            return (None, amount_base, 0)
+        for attempt in range(max_attempts):
+            if attempt > 0:
+                logger.info("[RETRY] 第 %d/%d 次重试 %s -> %s",
+                            attempt, self._trade_retry,
+                            payment_token[:10], target_token[:10])
+                await asyncio.sleep(2)
 
-        tx_hash = await self._send_swap(payment_token, target_token, amount_in,
-                                         source_tx=source_tx, stage="swap")
-        filled_raw = 0
-        if tx_hash:
+            quote = await self._okx.get_quote(
+                payment_token, target_token, amount_in, self._slippage
+            )
+            if quote is None:
+                msg = "OKX 无可用买入报价路由"
+                if attempt < max_attempts - 1:
+                    logger.warning("[RETRY] %s，等待重试", msg)
+                    continue
+                self.last_skip_reason = msg
+                logger.warning("[SKIP] %s", msg)
+                return (None, 0.0, 0)
+
+            # 报价安全校验
+            try:
+                self._validate_quote(quote)
+            except ValueError as e:
+                msg = f"报价校验不通过: {e}"
+                if attempt < max_attempts - 1:
+                    logger.warning("[RETRY] %s，等待重试", msg)
+                    continue
+                self.last_skip_reason = msg
+                logger.warning("[SKIP] %s", msg)
+                return (None, 0.0, 0)
+
+            to_amount = quote.get("toTokenAmount", "?")
+            logger.info(
+                "[%s] attempt %d/%d %s -> %s | amount_in=%d (%.2f %s) | expected_out=%s",
+                "DRY-RUN" if self._dry_run else "LIVE",
+                attempt + 1, max_attempts,
+                payment_token[:10], target_token[:10],
+                amount_in, amount_base, self._base_token,
+                to_amount,
+            )
+
+            if self._dry_run:
+                return (None, amount_base, 0)
+
+            tx_hash = await self._send_swap(payment_token, target_token, amount_in,
+                                             source_tx=source_tx, stage="swap")
+            if not tx_hash:
+                if attempt < max_attempts - 1:
+                    logger.warning("[RETRY] 发交易失败，等待重试")
+                    continue
+                return (None, amount_base, 0)
+
             filled_raw = await self._confirm_and_parse(tx_hash, target_token)
-        return (tx_hash, amount_base, filled_raw)
+            if filled_raw > 0:
+                return (tx_hash, amount_base, filled_raw)
+
+            logger.warning("[RETRY] attempt %d/%d 链上失败或未收到代币 (tx=%s)",
+                           attempt + 1, max_attempts, tx_hash[:10])
+
+        return (None, amount_base, 0)
 
     async def _calculate_amount(self) -> Optional[int]:
         """根据 base_token 计算跟单金额。

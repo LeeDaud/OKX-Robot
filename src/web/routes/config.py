@@ -224,7 +224,7 @@ async def update_params(params: dict):
         "trade_max_usd", "trade_fixed_virtuals", "token_whitelist",
         "min_trade_usd", "daily_loss_limit_usd", "slippage",
         "gas_limit_gwei", "take_profit_roi", "take_profit_check_sec",
-        "dry_run", "poll_interval_sec",
+        "dry_run", "poll_interval_sec", "trade_retry",
     }
     ydata = _read_yaml()
     for k, v in params.items():

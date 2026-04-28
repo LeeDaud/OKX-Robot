@@ -245,6 +245,7 @@ async def run(dry_run_override: bool | None = None) -> None:
             slippage=cfg.slippage,
             gas_limit_gwei=cfg.gas_limit_gwei,
             dry_run=cfg.dry_run,
+            trade_retry=cfg.trade_retry,
         )
 
     async with OKXDexClient(cfg.okx_api_key, cfg.okx_secret_key, cfg.okx_passphrase) as okx:

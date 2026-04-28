@@ -49,7 +49,7 @@ function DollarCell({ value, tone }: { value: number | null | undefined; tone?: 
   const style = tone ? { color: value >= 0 ? "var(--success)" : "var(--danger)" } : undefined;
   return (
     <span className="font-mono text-xs font-semibold" style={style}>
-      {value >= 0 ? "+" : ""}${value.toFixed(2)}
+      {value >= 0 ? "+$" : "-$"}{Math.abs(value).toFixed(2)}
     </span>
   );
 }

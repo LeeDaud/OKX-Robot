@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchTrades, fetchTradeStats } from "@/lib/api";
 import type { TradeStats } from "@/types/api";
 import { PageHeader, SectionCard, MetricCard, LoadingState } from "@/components/app-primitives";
+import { formatTime } from "@/lib/tokens";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -50,7 +51,7 @@ export default function Trades() {
             ) : (
               trades.map((t: any) => (
                 <TableRow key={t.id}>
-                  <TableCell className="whitespace-nowrap">{t.created_at?.slice(11, 19) || "-"}</TableCell>
+                  <TableCell className="whitespace-nowrap">{formatTime(t.created_at)}</TableCell>
                   <TableCell>
                     <Badge variant={t.side === "buy" ? "success" : "danger"}>{t.side === "buy" ? "买入" : "卖出"}</Badge>
                   </TableCell>

@@ -7,7 +7,7 @@ import type { PositionAllResponse } from "@/types/api";
 import { PageHeader, SectionCard, MetricCard, LoadingState, EmptyState } from "@/components/app-primitives";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { tokenDisplayName, shortenAddress } from "@/lib/tokens";
+import { tokenDisplayName, shortenAddress, formatTime } from "@/lib/tokens";
 
 function CopyAddress({ address }: { address: string }) {
   const [copied, setCopied] = useState(false);
@@ -194,7 +194,7 @@ export default function Positions() {
                     <TableCell><DollarCell value={pd?.unrealized_pnl} tone /></TableCell>
                     <TableCell><PctCell value={pd?.roi_pct} /></TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">
-                      {p.created_at?.slice(11, 19) || "-"}
+                      {formatTime(p.created_at)}
                     </TableCell>
                   </TableRow>
                 );

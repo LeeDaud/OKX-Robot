@@ -20,6 +20,20 @@ export function tokenDisplayName(addr: string): string {
   return TOKEN_NAMES[key] ?? shortenAddress(addr, 6, 4)
 }
 
+/** Format a UTC ISO timestamp to UTC+8 time string (HH:mm:ss). */
+export function formatTime(isoStr: string | null | undefined): string {
+  if (!isoStr) return "-";
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return "-";
+  return d.toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
 /** Format a token amount to a readable string (auto decimal places). */
 export function formatTokenAmount(amount: number): string {
   if (amount === 0) return "0"

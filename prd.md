@@ -1,4 +1,4 @@
-# PRD — OKX Robot 跟单交易机器人
+# PRD — Auto Trader 跟单交易机器人
 
 ## 背景与目标
 

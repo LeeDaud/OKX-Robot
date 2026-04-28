@@ -1,31 +1,69 @@
-import { useQuery } from '@tanstack/react-query'
-import { fetchWallet, fetchConfig } from '../lib/api'
+import { useQuery } from "@tanstack/react-query";
+import { fetchWallet, fetchConfig } from "@/lib/api";
+import type { AppConfig, WalletInfo } from "@/types/api";
+import { PageHeader, SectionCard, LoadingState, StatusBadge } from "@/components/app-primitives";
+import { Badge } from "@/components/ui/badge";
 
 export default function WalletPage() {
-  const { data: wallet } = useQuery({ queryKey: ['wallet'], queryFn: fetchWallet })
-  const { data: config } = useQuery({ queryKey: ['config'], queryFn: fetchConfig })
+  const { data: wallet, isLoading } = useQuery<WalletInfo>({ queryKey: ["wallet"], queryFn: fetchWallet });
+  const { data: config } = useQuery<AppConfig>({ queryKey: ["config"], queryFn: fetchConfig });
+
+  if (isLoading) return <LoadingState label="正在加载钱包信息..." />;
 
   return (
-    <div>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 20px' }}>执行钱包</h1>
+    <div className="space-y-6">
+      <PageHeader title="执行钱包" description="用于跟单交易的执行钱包信息" />
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 16px' }}>钱包信息</h2>
-        <div style={{ fontSize: 13, lineHeight: 2 }}>
-          <div><strong>地址：</strong> <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{wallet?.wallet_address || '-'}</span></div>
-          <div><strong>RPC：</strong> <span style={{ fontSize: 12 }}>{wallet?.rpc_http_url || '-'}</span></div>
-          <div><strong>运行模式：</strong> {config?.dry_run ? <span style={{ color: 'var(--warning)' }}>Dry Run</span> : <span style={{ color: 'var(--success)' }}>Live</span>}</div>
-        </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <SectionCard title="钱包信息">
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">地址</div>
+              <div className="mt-1 font-mono text-sm break-all">{wallet?.wallet_address || "-"}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">RPC</div>
+              <div className="mt-1 text-sm text-muted-foreground break-all">{wallet?.rpc_http_url || "-"}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">运行模式</div>
+              <div className="mt-1">
+                <Badge variant={config?.dry_run ? "warning" : "success"}>{config?.dry_run ? "Dry Run" : "Live"}</Badge>
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard title="风控状态">
+          <div className="space-y-3">
+            <StatusBadge
+              ok={!config?.dry_run}
+              label="交易执行"
+              hint={config?.dry_run ? "当前为 Dry Run 模式，不会发送真实交易" : "实盘模式，正常执行交易"}
+            />
+            <div className="text-sm text-muted-foreground">
+              日亏损上限：<strong>${config?.daily_loss_limit_usd ?? "-"}</strong>
+            </div>
+          </div>
+        </SectionCard>
       </div>
 
-      <div className="card">
-        <h2 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 16px' }}>风险提示</h2>
-        <ul style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8, margin: 0, paddingLeft: 20 }}>
-          <li>私钥和 API Key 仅存储在服务器 .env 文件中，前端不展示</li>
-          <li>请勿将此管理页面暴露到公网</li>
-          <li>日亏损上限当前设置为 ${config?.daily_loss_limit_usd ?? '-'}</li>
+      <SectionCard title="安全提示">
+        <ul className="space-y-2 text-sm text-muted-foreground">
+          <li className="flex items-center gap-2">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[color:var(--warning-soft)] text-[10px] font-bold text-[color:var(--warning-foreground)]">1</span>
+            私钥和 API Key 仅存储在服务器 .env 文件中，前端不展示
+          </li>
+          <li className="flex items-center gap-2">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[color:var(--warning-soft)] text-[10px] font-bold text-[color:var(--warning-foreground)]">2</span>
+            请勿将此管理页面暴露到公网
+          </li>
+          <li className="flex items-center gap-2">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[color:var(--warning-soft)] text-[10px] font-bold text-[color:var(--warning-foreground)]">3</span>
+            建议定期检查交易记录，监控异常活动
+          </li>
         </ul>
-      </div>
+      </SectionCard>
     </div>
-  )
+  );
 }

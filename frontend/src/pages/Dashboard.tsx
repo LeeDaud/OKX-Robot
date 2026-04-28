@@ -1,87 +1,61 @@
-import { useQuery } from '@tanstack/react-query'
-import { fetchConfig, fetchTradeStats, fetchPositions } from '../lib/api'
+import { useQuery } from "@tanstack/react-query";
+import { fetchConfig, fetchTradeStats, fetchPositions } from "@/lib/api";
+import type { AppConfig, TradeStats } from "@/types/api";
+import { PageHeader, MetricCard, SectionCard, LoadingState } from "@/components/app-primitives";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export default function Dashboard() {
-  const { data: config } = useQuery({ queryKey: ['config'], queryFn: fetchConfig })
-  const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: fetchTradeStats })
-  const { data: positions } = useQuery({ queryKey: ['positions'], queryFn: fetchPositions })
+  const { data: config, isLoading } = useQuery<AppConfig>({ queryKey: ["config"], queryFn: fetchConfig });
+  const { data: stats } = useQuery<TradeStats>({ queryKey: ["stats"], queryFn: fetchTradeStats });
+  const { data: positions } = useQuery({ queryKey: ["positions"], queryFn: fetchPositions });
 
-  const openCount = positions?.positions?.length ?? 0
+  if (isLoading) return <LoadingState label="正在加载概览..." />;
+
+  const openCount = positions?.positions?.length ?? 0;
+  const todayPnl = stats?.today_pnl ?? 0;
 
   return (
-    <div>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 20px' }}>概览</h1>
+    <div className="space-y-6">
+      <PageHeader title="概览" description="跟单机器人运行状态一览" />
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-        gap: 16,
-        marginBottom: 24,
-      }}>
-        <StatCard title="钱包地址" value={config?.wallet_address ? `${config.wallet_address.slice(0, 8)}...${config.wallet_address.slice(-4)}` : '-'} />
-        <StatCard title="模式" value={config?.trade_mode ?? '-'} />
-        <StatCard title="基础代币" value={config?.base_token ?? '-'} />
-        <StatCard title="跟单目标" value={String(config?.copy_targets?.length ?? 0)} />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricCard label="跟单目标" value={String(config?.copy_targets?.length ?? 0)} hint="已配置的跟单钱包数量" />
+        <MetricCard label="今日交易" value={String(stats?.today?.total ?? 0)} hint={`成功 ${stats?.today?.success ?? 0} 笔`} />
+        <MetricCard label="今日 PnL" value={`$${todayPnl.toFixed(2)}`} hint="今日盈亏" tone={todayPnl >= 0 ? "success" : "danger"} />
+        <MetricCard label="持仓数量" value={String(openCount)} hint="当前持有仓位" />
       </div>
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-        gap: 16,
-        marginBottom: 24,
-      }}>
-        <StatCard title="今日交易" value={String(stats?.today?.total ?? 0)} subtitle={`成功: ${stats?.today?.success ?? 0}`} />
-        <StatCard title="今日 PnL" value={`$${(stats?.today_pnl ?? 0).toFixed(2)}`} color={(stats?.today_pnl ?? 0) >= 0 ? 'var(--success)' : 'var(--danger)'} />
-        <StatCard title="累计 PnL" value={`$${(stats?.all?.realized_pnl ?? 0).toFixed(2)}`} color={(stats?.all?.realized_pnl ?? 0) >= 0 ? 'var(--success)' : 'var(--danger)'} />
-        <StatCard title="持仓数量" value={String(openCount)} />
-        <StatCard title="累计投入" value={`$${(stats?.all?.total_invested ?? 0).toFixed(2)}`} />
+      <div className="grid gap-4 sm:grid-cols-3">
+        <MetricCard label="累计 PnL" value={`$${(stats?.all?.realized_pnl ?? 0).toFixed(2)}`} hint="已实现盈亏" tone={(stats?.all?.realized_pnl ?? 0) >= 0 ? "success" : "danger"} />
+        <MetricCard label="累计投入" value={`$${(stats?.all?.total_invested ?? 0).toFixed(2)}`} hint="总投入本金" />
+        <MetricCard label="运行模式" value={config?.dry_run ? "Dry Run" : "Live"} hint={`基础代币: ${config?.base_token ?? "-"}`} tone={config?.dry_run ? "warning" : "success"} />
       </div>
 
       {config?.copy_targets && config.copy_targets.length > 0 && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>跟单钱包列表</div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ color: 'var(--text-secondary)', textAlign: 'left' }}>
-                <th style={{ padding: '6px 8px' }}>地址</th>
-                <th style={{ padding: '6px 8px' }}>备注</th>
-                <th style={{ padding: '6px 8px' }}>模式</th>
-              </tr>
-            </thead>
-            <tbody>
+        <SectionCard title="跟单钱包列表" description={`共 ${config.copy_targets.length} 个目标地址`}>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>地址</TableHead>
+                <TableHead>备注</TableHead>
+                <TableHead>模式</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {config.copy_targets.map((t) => (
-                <tr key={t.address} style={{ borderTop: '1px solid var(--border)' }}>
-                  <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: 12 }}>{`${t.address.slice(0, 10)}...${t.address.slice(-6)}`}</td>
-                  <td style={{ padding: '8px' }}>{t.remark || '-'}</td>
-                  <td style={{ padding: '8px' }}>
-                    <span style={{
-                      display: 'inline-block',
-                      padding: '2px 8px',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      background: t.trade_mode === 'monitor' ? 'var(--warning)' : 'var(--success)',
-                      color: '#fff',
-                      opacity: 0.85,
-                    }}>
-                      {t.trade_mode || config.trade_mode}
-                    </span>
-                  </td>
-                </tr>
+                <TableRow key={t.address}>
+                  <TableCell className="font-mono text-xs">{t.address.slice(0, 10)}...{t.address.slice(-6)}</TableCell>
+                  <TableCell>{t.remark || "-"}</TableCell>
+                  <TableCell>
+                    <Badge variant={t.trade_mode === "monitor" ? "warning" : "success"}>{t.trade_mode || config.trade_mode}</Badge>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </SectionCard>
       )}
     </div>
-  )
-}
-
-function StatCard({ title, value, subtitle, color }: { title: string; value: string; subtitle?: string; color?: string }) {
-  return (
-    <div className="card">
-      <div className="stat-label">{title}</div>
-      <div className="stat-value" style={color ? { color } : undefined}>{value}</div>
-      {subtitle && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{subtitle}</div>}
-    </div>
-  )
+  );
 }

@@ -1,137 +1,157 @@
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2 } from 'lucide-react'
-import { fetchConfig, addTarget, deleteTarget } from '../lib/api'
-import type { CopyTarget } from '../types/api'
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { fetchConfig, addTarget, deleteTarget } from "@/lib/api";
+import type { CopyTarget } from "@/types/api";
+import { PageHeader, SectionCard, LoadingState } from "@/components/app-primitives";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Input, Select } from "@/components/ui/input";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 export default function Wallets() {
-  const qc = useQueryClient()
-  const { data: config } = useQuery({ queryKey: ['config'], queryFn: fetchConfig })
-  const [showForm, setShowForm] = useState(false)
-  const [address, setAddress] = useState('')
-  const [remark, setRemark] = useState('')
-  const [mode, setMode] = useState('monitor')
+  const qc = useQueryClient();
+  const { data: config, isLoading } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
+  const [open, setOpen] = useState(false);
+  const [address, setAddress] = useState("");
+  const [remark, setRemark] = useState("");
+  const [mode, setMode] = useState("monitor");
 
   const addMut = useMutation({
     mutationFn: () => addTarget({ address, remark: remark || undefined, trade_mode: mode }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['config'] })
-      setShowForm(false)
-      setAddress('')
-      setRemark('')
+      qc.invalidateQueries({ queryKey: ["config"] });
+      setOpen(false);
+      setAddress("");
+      setRemark("");
+      toast.success("跟单钱包已添加");
     },
-  })
+    onError: (e: Error) => toast.error(`添加失败: ${e.message}`),
+  });
 
   const delMut = useMutation({
     mutationFn: (addr: string) => deleteTarget(addr),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['config'] }),
-  })
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["config"] });
+      toast.success("已删除目标");
+    },
+    onError: (e: Error) => toast.error(`删除失败: ${e.message}`),
+  });
 
-  const targets = config?.copy_targets ?? []
+  const targets = config?.copy_targets ?? [];
+
+  if (isLoading) return <LoadingState label="正在加载钱包列表..." />;
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>跟单钱包</h1>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '8px 16px', borderRadius: 10,
-            background: 'var(--brand)', color: '#fff',
-            border: 'none', cursor: 'pointer', fontSize: 14,
-          }}
-        >
-          <Plus size={16} /> 添加钱包
-        </button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="跟单钱包"
+        description="管理被监控的链上钱包地址"
+        actions={
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="size-4" />
+                添加钱包
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>添加跟单钱包</DialogTitle>
+                <DialogDescription>输入目标钱包地址及相关配置</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">地址</label>
+                  <Input
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="0x..."
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">备注</label>
+                  <Input
+                    value={remark}
+                    onChange={(e) => setRemark(e.target.value)}
+                    placeholder="可选标识"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">模式</label>
+                  <Select value={mode} onChange={(e) => setMode(e.target.value)}>
+                    <option value="monitor">监测</option>
+                    <option value="ratio">比例跟单</option>
+                    <option value="fixed">固定跟单</option>
+                  </Select>
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <DialogClose asChild>
+                    <Button variant="secondary">取消</Button>
+                  </DialogClose>
+                  <Button onClick={() => addMut.mutate()} disabled={!address || addMut.isPending}>
+                    {addMut.isPending ? "添加中..." : "添加"}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        }
+      />
 
-      {showForm && (
-        <div className="card" style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'flex-end' }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>地址</label>
-            <input
-              value={address} onChange={(e) => setAddress(e.target.value)}
-              placeholder="0x..."
-              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, fontFamily: 'monospace', boxSizing: 'border-box' }}
-            />
-          </div>
-          <div style={{ flex: 0.4 }}>
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>备注</label>
-            <input
-              value={remark} onChange={(e) => setRemark(e.target.value)}
-              placeholder="EFO"
-              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, boxSizing: 'border-box' }}
-            />
-          </div>
-          <div style={{ flex: 0.3 }}>
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>模式</label>
-            <select
-              value={mode} onChange={(e) => setMode(e.target.value)}
-              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, boxSizing: 'border-box' }}
-            >
-              <option value="monitor">监测</option>
-              <option value="ratio">比例跟单</option>
-              <option value="fixed">固定跟单</option>
-            </select>
-          </div>
-          <button
-            onClick={() => addMut.mutate()}
-            disabled={!address || addMut.isPending}
-            style={{
-              padding: '8px 20px', borderRadius: 8,
-              background: !address ? 'var(--text-muted)' : 'var(--brand)',
-              color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap',
-            }}
-          >
-            添加
-          </button>
-        </div>
-      )}
-
-      <div className="card">
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ color: 'var(--text-secondary)', textAlign: 'left' }}>
-              <th style={{ padding: '8px 10px' }}>地址</th>
-              <th style={{ padding: '8px 10px' }}>备注</th>
-              <th style={{ padding: '8px 10px' }}>模式</th>
-              <th style={{ padding: '8px 10px' }}>比例</th>
-              <th style={{ padding: '8px 10px' }}>固定金额</th>
-              <th style={{ padding: '8px 10px' }}>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {targets.length === 0 && (
-              <tr><td colSpan={6} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>暂无跟单钱包</td></tr>
+      <SectionCard title="目标地址" description={targets.length > 0 ? `共 ${targets.length} 个地址` : undefined}>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>地址</TableHead>
+              <TableHead>备注</TableHead>
+              <TableHead>模式</TableHead>
+              <TableHead>比例</TableHead>
+              <TableHead>固定金额</TableHead>
+              <TableHead className="w-16">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {targets.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  暂无跟单钱包，点击右上角添加
+                </TableCell>
+              </TableRow>
+            ) : (
+              targets.map((t: CopyTarget) => (
+                <TableRow key={t.address}>
+                  <TableCell className="font-mono text-xs">
+                    {t.address.slice(0, 12)}...{t.address.slice(-6)}
+                  </TableCell>
+                  <TableCell>{t.remark || "-"}</TableCell>
+                  <TableCell>
+                    <Badge variant={t.trade_mode === "monitor" ? "warning" : "success"}>
+                      {t.trade_mode || config?.trade_mode || "-"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{t.trade_ratio != null ? `${(t.trade_ratio * 100).toFixed(0)}%` : "-"}</TableCell>
+                  <TableCell>{t.trade_fixed_usd ? `$${t.trade_fixed_usd}` : "-"}</TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        if (confirm("确认删除此目标？")) delMut.mutate(t.address);
+                      }}
+                    >
+                      <Trash2 className="size-4 text-[var(--danger)]" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))
             )}
-            {targets.map((t: CopyTarget) => (
-              <tr key={t.address} style={{ borderTop: '1px solid var(--border)' }}>
-                <td style={{ padding: '10px', fontFamily: 'monospace', fontSize: 12 }}>{`${t.address.slice(0, 12)}...${t.address.slice(-6)}`}</td>
-                <td style={{ padding: '10px' }}>{t.remark || '-'}</td>
-                <td style={{ padding: '10px' }}>
-                  <span style={{
-                    display: 'inline-block', padding: '2px 8px', borderRadius: 6, fontSize: 12,
-                    background: t.trade_mode === 'monitor' ? 'var(--warning)' : 'var(--success)', color: '#fff', opacity: 0.85,
-                  }}>
-                    {t.trade_mode || config?.trade_mode || '-'}
-                  </span>
-                </td>
-                <td style={{ padding: '10px' }}>{t.trade_ratio != null ? `${(t.trade_ratio * 100).toFixed(0)}%` : '-'}</td>
-                <td style={{ padding: '10px' }}>{t.trade_fixed_usd ? `$${t.trade_fixed_usd}` : '-'}</td>
-                <td style={{ padding: '10px' }}>
-                  <button
-                    onClick={() => { if (confirm('确认删除此目标？')) delMut.mutate(t.address) }}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: 4 }}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </SectionCard>
     </div>
-  )
+  );
 }

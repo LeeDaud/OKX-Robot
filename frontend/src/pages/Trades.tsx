@@ -1,67 +1,74 @@
-import { useQuery } from '@tanstack/react-query'
-import { fetchTrades, fetchTradeStats } from '../lib/api'
+import { useQuery } from "@tanstack/react-query";
+import { fetchTrades, fetchTradeStats } from "@/lib/api";
+import type { TradeStats } from "@/types/api";
+import { PageHeader, SectionCard, MetricCard, LoadingState } from "@/components/app-primitives";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export default function Trades() {
-  const { data: tradesData } = useQuery({ queryKey: ['trades'], queryFn: () => fetchTrades(100, 0) })
-  const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: fetchTradeStats })
+  const { data: tradesData, isLoading } = useQuery({
+    queryKey: ["trades"],
+    queryFn: () => fetchTrades(100, 0),
+  });
+  const { data: stats } = useQuery<TradeStats>({ queryKey: ["stats"], queryFn: fetchTradeStats });
 
-  const trades = tradesData?.trades ?? []
+  const trades = tradesData?.trades ?? [];
+  const todayPnl = stats?.today_pnl ?? 0;
+
+  if (isLoading) return <LoadingState label="正在加载交易记录..." />;
 
   return (
-    <div>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 20px' }}>交易记录</h1>
+    <div className="space-y-6">
+      <PageHeader title="交易记录" description="跟单交易的完整记录" />
 
       {stats && (
-        <div style={{ display: 'flex', gap: 16, marginBottom: 20, fontSize: 13 }}>
-          <span>今日: <strong>{stats.today.total}</strong> 笔 | 成功 <strong>{stats.today.success}</strong> | PnL <strong style={{ color: stats.today_pnl >= 0 ? 'var(--success)' : 'var(--danger)' }}>${stats.today_pnl.toFixed(2)}</strong></span>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <MetricCard label="今日交易" value={`${stats.today.total} 笔`} hint={`成功 ${stats.today.success} 笔`} />
+          <MetricCard label="今日 PnL" value={`$${todayPnl.toFixed(2)}`} hint="今日盈亏" tone={todayPnl >= 0 ? "success" : "danger"} />
+          <MetricCard label="累计交易" value={`${stats.all.total_trades} 笔`} hint={`总投入 $${stats.all.total_invested.toFixed(2)}`} />
         </div>
       )}
 
-      <div className="card" style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-          <thead>
-            <tr style={{ color: 'var(--text-secondary)', textAlign: 'left' }}>
-              <th style={{ padding: '8px 8px' }}>时间</th>
-              <th style={{ padding: '8px 8px' }}>方向</th>
-              <th style={{ padding: '8px 8px' }}>状态</th>
-              <th style={{ padding: '8px 8px' }}>Token In</th>
-              <th style={{ padding: '8px 8px' }}>Token Out</th>
-              <th style={{ padding: '8px 8px' }}>PnL</th>
-              <th style={{ padding: '8px 8px' }}>ROI</th>
-            </tr>
-          </thead>
-          <tbody>
-            {trades.length === 0 && (
-              <tr><td colSpan={7} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>暂无交易记录</td></tr>
+      <SectionCard title="交易明细" description={trades.length > 0 ? `最近 ${trades.length} 笔` : undefined}>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>时间</TableHead>
+              <TableHead>方向</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>Token In</TableHead>
+              <TableHead>Token Out</TableHead>
+              <TableHead>PnL</TableHead>
+              <TableHead>ROI</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {trades.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">暂无交易记录</TableCell>
+              </TableRow>
+            ) : (
+              trades.map((t: any) => (
+                <TableRow key={t.id}>
+                  <TableCell className="whitespace-nowrap">{t.created_at?.slice(11, 19) || "-"}</TableCell>
+                  <TableCell>
+                    <Badge variant={t.side === "buy" ? "success" : "danger"}>{t.side === "buy" ? "买入" : "卖出"}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={t.status === "success" ? "success" : t.status === "pending" ? "warning" : "danger"}>{t.status}</Badge>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{t.token_in?.slice(0, 10) || "-"}...</TableCell>
+                  <TableCell className="font-mono text-xs">{t.token_out?.slice(0, 10) || "-"}...</TableCell>
+                  <TableCell className="font-semibold" style={{ color: (t.pnl || 0) >= 0 ? "var(--success)" : "var(--danger)" }}>
+                    {t.pnl != null ? `$${t.pnl.toFixed(2)}` : "-"}
+                  </TableCell>
+                  <TableCell>{t.roi_pct != null ? `${(t.roi_pct * 100).toFixed(1)}%` : "-"}</TableCell>
+                </TableRow>
+              ))
             )}
-            {trades.map((t) => (
-              <tr key={t.id} style={{ borderTop: '1px solid var(--border)' }}>
-                <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{t.created_at?.slice(11, 19) || '-'}</td>
-                <td style={{ padding: '8px' }}>
-                  <span style={{ color: t.side === 'buy' ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
-                    {t.side === 'buy' ? '买入' : '卖出'}
-                  </span>
-                </td>
-                <td style={{ padding: '8px' }}>
-                  <span style={{
-                    display: 'inline-block', padding: '1px 6px', borderRadius: 4, fontSize: 11,
-                    background: t.status === 'success' ? 'var(--success)' : t.status === 'pending' ? 'var(--warning)' : 'var(--danger)',
-                    color: '#fff', opacity: 0.85,
-                  }}>
-                    {t.status}
-                  </span>
-                </td>
-                <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: 11 }}>{t.token_in?.slice(0, 10) || '-'}...</td>
-                <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: 11 }}>{t.token_out?.slice(0, 10) || '-'}...</td>
-                <td style={{ padding: '8px', color: (t.pnl || 0) >= 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
-                  {t.pnl != null ? `$${t.pnl.toFixed(2)}` : '-'}
-                </td>
-                <td style={{ padding: '8px' }}>{t.roi_pct != null ? `${(t.roi_pct * 100).toFixed(1)}%` : '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </SectionCard>
     </div>
-  )
+  );
 }

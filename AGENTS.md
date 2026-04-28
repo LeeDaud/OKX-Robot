@@ -1,4 +1,4 @@
-# OKX Robot — 项目规则
+# Auto Trader — 项目规则
 
 ## 项目概述
 
@@ -15,7 +15,7 @@ Base 链上的跟单交易机器人，监控指定钱包地址的链上交易，
 ## 目录结构
 
 ```
-015-OKX-Robot/
+015-Auto-Trader/
 ├── AGENTS.md
 ├── prd.md
 ├── plan.md

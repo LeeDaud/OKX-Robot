@@ -1,4 +1,4 @@
-# OKX Copy Trading Robot
+# Auto Trader
 
 Base 链跟单机器人。监控目标钱包地址的链上交易，通过 OKX DEX Aggregator API 自动跟单，支持止盈卖出、风控止损、飞书通知。
 
@@ -101,12 +101,12 @@ src/
 ```bash
 # ssh 登录后更新
 ssh root@<server>
-cd /opt/okx-robot
+cd /opt/auto-trader
 git pull --ff-only origin master
-systemctl restart okx-robot
+systemctl restart auto-trader
 
 # 查看日志
-journalctl -u okx-robot -f
+journalctl -u auto-trader -f
 ```
 
 首次部署参考 `deploy/install.sh`。

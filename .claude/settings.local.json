@@ -14,7 +14,10 @@
       "Read(//c/Users/10159/DAAA-Project/**)",
       "Bash(ls -la copytrade.db)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:gitclone.com)"
+      "WebFetch(domain:gitclone.com)",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)"
     ]
   }
 }

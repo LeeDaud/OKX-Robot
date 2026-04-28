@@ -1,4 +1,4 @@
-# Plan — OKX Robot 技术实施计划
+# Plan — Auto Trader 技术实施计划
 
 ## 技术选型
 

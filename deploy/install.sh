@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_DIR=/opt/okx-robot
-SERVICE_NAME=okx-robot
+DEPLOY_DIR=/opt/auto-trader
+SERVICE_NAME=auto-trader
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 PYTHON_BIN="${DEPLOY_DIR}/.venv/bin/python"
 
@@ -42,7 +42,7 @@ echo "=== [3/6] Validate local config ==="
 "$PYTHON_BIN" -m src.main --check-config
 
 echo "=== [4/6] Install systemd service ==="
-install -m 0644 deploy/okx-robot.service "$SERVICE_FILE"
+install -m 0644 deploy/auto-trader.service "$SERVICE_FILE"
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" >/dev/null
 

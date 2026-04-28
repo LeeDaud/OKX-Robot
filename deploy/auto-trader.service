@@ -1,0 +1,22 @@
+[Unit]
+Description=Auto Trader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/auto-trader
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/auto-trader
+EnvironmentFile=/opt/auto-trader/.env
+ExecStartPre=/usr/bin/test -f /opt/auto-trader/.env
+ExecStartPre=/usr/bin/test -f /opt/auto-trader/config.yaml
+ExecStart=/opt/auto-trader/.venv/bin/python -m src.main
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

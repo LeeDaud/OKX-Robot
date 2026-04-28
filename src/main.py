@@ -181,7 +181,7 @@ async def run(dry_run_override: bool | None = None) -> None:
     if dry_run_override is not None:
         cfg.dry_run = dry_run_override
 
-    logger.info("Starting OKX Robot | dry_run=%s | targets=%d",
+    logger.info("Starting Auto Trader | dry_run=%s | targets=%d",
                 cfg.dry_run, len(cfg.copy_targets))
 
     await init_db()

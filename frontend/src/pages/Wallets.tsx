@@ -239,6 +239,7 @@ export default function Wallets() {
                     </TableCell>
                     <TableCell>{t.trade_ratio != null ? `${(t.trade_ratio * 100).toFixed(0)}%` : "-"}</TableCell>
                     <TableCell>{t.trade_fixed_usd ? `$${t.trade_fixed_usd}` : "-"}</TableCell>
+                    <TableCell>{t.trade_fixed_virtuals ?? "-"}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
                         <Button variant="ghost" size="icon" onClick={() => openEdit(t)}>

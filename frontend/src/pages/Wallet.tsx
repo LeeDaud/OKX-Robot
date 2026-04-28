@@ -37,6 +37,7 @@ export default function WalletPage() {
       if (form.okx_api_key) data.okx_api_key = form.okx_api_key;
       if (form.okx_secret_key) data.okx_secret_key = form.okx_secret_key;
       if (form.okx_passphrase) data.okx_passphrase = form.okx_passphrase;
+      if (Object.keys(data).length === 0) throw new Error("未检测到任何修改");
       return updateWallet(data);
     },
     onSuccess: (res) => {

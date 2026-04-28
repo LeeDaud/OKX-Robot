@@ -81,6 +81,16 @@ class TargetUpdate(BaseModel):
     trade_fixed_virtuals: float | None = None
 
 
+class TargetPatch(BaseModel):
+    """不含 address，仅用于 PUT 更新（address 来自路径参数）。"""
+    remark: str | None = None
+    trade_mode: str | None = None
+    trade_ratio: float | None = None
+    trade_fixed_usd: float | None = None
+    trade_max_usd: float | None = None
+    trade_fixed_virtuals: float | None = None
+
+
 @router.post("/config/targets")
 async def add_target(target: TargetUpdate):
     """添加跟单目标。"""
@@ -109,7 +119,7 @@ async def add_target(target: TargetUpdate):
 
 
 @router.put("/config/targets/{address}")
-async def update_target(address: str, target: TargetUpdate):
+async def update_target(address: str, target: TargetPatch):
     """更新跟单目标配置。"""
     ydata = _read_yaml()
     targets = ydata.get("copy_targets", []) or []

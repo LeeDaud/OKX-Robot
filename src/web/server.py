@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from src.web.routes import config, trades
+from src.web.routes import config, trades, positions
 
 
 @asynccontextmanager
@@ -28,6 +28,7 @@ app.add_middleware(
 
 app.include_router(config.router, prefix="/api")
 app.include_router(trades.router, prefix="/api")
+app.include_router(positions.router, prefix="/api")
 
 # 生产环境：前端构建产物
 import os

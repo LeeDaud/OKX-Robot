@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { fetchPositionsAll } from "@/lib/api";
+import { fetchPositionsAll, refreshPositionsPrices } from "@/lib/api";
 import type { PositionAllResponse } from "@/types/api";
 import { PageHeader, SectionCard, MetricCard, LoadingState, EmptyState } from "@/components/app-primitives";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { tokenDisplayName, formatTokenAmount } from "@/lib/tokens";
 
@@ -35,12 +36,41 @@ function CopyAddress({ address }: { address: string }) {
   );
 }
 
+type PriceData = {
+  current_price: number | null
+  current_value_usd: number | null
+  unrealized_pnl: number | null
+  roi_pct: number | null
+  amount: number
+  cost_basis_usd: number
+}
+
 export default function Positions() {
+  const [priceData, setPriceData] = useState<Record<string, PriceData> | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
   const { data, isLoading } = useQuery<PositionAllResponse>({
     queryKey: ["positions-all"],
     queryFn: fetchPositionsAll,
     refetchInterval: 15000,
   });
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const result = await refreshPositionsPrices();
+      if (result.positions && Object.keys(result.positions).length > 0) {
+        setPriceData(result.positions);
+        toast.success("价格已刷新");
+      } else {
+        toast.error("无持仓数据或 OKX API 未配置");
+      }
+    } catch (e: any) {
+      toast.error(`价格刷新失败: ${e.message}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   if (isLoading) return <LoadingState label="正在加载持仓数据..." />;
 
@@ -48,9 +78,28 @@ export default function Positions() {
   const closed = data?.closed ?? [];
   const summary = data?.summary;
 
+  // 汇总刷新后的未实现盈亏
+  let totalUnrealizedPnl: number | null = null;
+  if (priceData) {
+    totalUnrealizedPnl = 0;
+    for (const pid in priceData) {
+      const pnl = priceData[pid].unrealized_pnl;
+      if (pnl !== null) totalUnrealizedPnl += pnl;
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <PageHeader title="持仓管理" description="当前持仓与历史持仓概览" />
+      <PageHeader
+        title="持仓管理"
+        description="当前持仓与历史持仓概览"
+        actions={
+          <Button onClick={handleRefresh} disabled={refreshing}>
+            <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "刷新中..." : "刷新报价"}
+          </Button>
+        }
+      />
 
       {summary && (
         <div className="grid gap-4 sm:grid-cols-4">
@@ -58,6 +107,14 @@ export default function Positions() {
           <MetricCard label="投入本金" value={`$${summary.total_invested_open.toFixed(2)}`} hint="当前持仓总投入" />
           <MetricCard label="已平仓" value={String(summary.closed_count)} hint="历史平仓笔数" />
           <MetricCard label="已实现 PnL" value={`$${summary.realized_pnl.toFixed(2)}`} hint="全部已实现盈亏" tone={summary.realized_pnl >= 0 ? "success" : "danger"} />
+          {totalUnrealizedPnl !== null && (
+            <MetricCard
+              label="未实现 PnL"
+              value={`$${totalUnrealizedPnl.toFixed(2)}`}
+              hint="当前持仓浮动盈亏"
+              tone={totalUnrealizedPnl >= 0 ? "success" : "danger"}
+            />
+          )}
         </div>
       )}
 
@@ -72,29 +129,56 @@ export default function Positions() {
                 <TableHead>数量</TableHead>
                 <TableHead>入场价</TableHead>
                 <TableHead>投入成本</TableHead>
+                <TableHead>当前价</TableHead>
+                <TableHead>当前价值</TableHead>
                 <TableHead>未实现 PnL</TableHead>
+                <TableHead>ROI</TableHead>
                 <TableHead>开仓时间</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {open.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>
-                    <CopyAddress address={p.token_out || ""} />
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {p.amount_out ? formatTokenAmount(p.amount_out) : "-"}
-                  </TableCell>
-                  <TableCell>${p.entry_price?.toFixed(6) ?? "-"}</TableCell>
-                  <TableCell>${(p.filled_cost_usd ?? 0).toFixed(2)}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    —<span className="ml-1 text-[10px]">需链上报价</span>
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                    {p.created_at?.slice(11, 19) || "-"}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {open.map((p) => {
+                const pd = priceData?.[String(p.id)];
+                return (
+                  <TableRow key={p.id}>
+                    <TableCell>
+                      <CopyAddress address={p.token_out || ""} />
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {pd ? formatTokenAmount(pd.amount) : (p.amount_out ? formatTokenAmount(p.amount_out) : "-")}
+                    </TableCell>
+                    <TableCell>${p.entry_price?.toFixed(6) ?? "-"}</TableCell>
+                    <TableCell>${(p.filled_cost_usd ?? 0).toFixed(2)}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {pd?.current_price != null ? `$${pd.current_price.toFixed(8)}` : "-"}
+                    </TableCell>
+                    <TableCell>
+                      {pd?.current_value_usd != null ? `$${pd.current_value_usd.toFixed(2)}` : "-"}
+                    </TableCell>
+                    <TableCell>
+                      {pd?.unrealized_pnl != null ? (
+                        <span className="font-semibold" style={{ color: pd.unrealized_pnl >= 0 ? "var(--success)" : "var(--danger)" }}>
+                          {pd.unrealized_pnl >= 0 ? "+" : ""}${pd.unrealized_pnl.toFixed(2)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {pd?.roi_pct != null ? (
+                        <span style={{ color: pd.roi_pct >= 0 ? "var(--success)" : "var(--danger)" }}>
+                          {pd.roi_pct >= 0 ? "+" : ""}{pd.roi_pct.toFixed(1)}%
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                      {p.created_at?.slice(11, 19) || "-"}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         )}
@@ -129,7 +213,7 @@ export default function Positions() {
                   <TableCell>${p.exit_price?.toFixed(6) ?? "-"}</TableCell>
                   <TableCell>
                     <span style={{ color: (p.roi_pct || 0) >= 0 ? "var(--success)" : "var(--danger)" }}>
-                      {p.roi_pct != null ? `${(p.roi_pct * 100).toFixed(1)}%` : "-"}
+                      {(p.roi_pct || 0) >= 0 ? "+" : ""}{(p.roi_pct != null ? (p.roi_pct * 100).toFixed(1) : "-")}%
                     </span>
                   </TableCell>
                   <TableCell className="font-semibold" style={{ color: (p.pnl || 0) >= 0 ? "var(--success)" : "var(--danger)" }}>

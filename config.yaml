@@ -4,6 +4,7 @@ copy_targets:
     trade_mode: monitor
   - address: "0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d"
     trade_mode: monitor
+    remark: "EFO"
 
 # 回购地址簿：回购地址买入指定代币时，立即卖出对应持仓
 # 格式："回购地址": "代币地址"

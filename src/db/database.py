@@ -224,6 +224,18 @@ async def get_open_position_by_token(token: str, path: str = DB_PATH) -> Optiona
             return dict(row) if row else None
 
 
+async def get_all_trades(limit: int = 100, offset: int = 0, path: str = DB_PATH) -> list[dict]:
+    """查询交易记录列表（按时间倒序）。"""
+    async with aiosqlite.connect(path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM copy_trades
+               ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ) as cur:
+            return [dict(row) async for row in cur]
+
+
 async def get_all_stats(path: str = DB_PATH) -> dict:
     """总实际盈亏、总投入金额（逐行按 token_in 换算，兼容多 decimal 代币）。"""
     async with aiosqlite.connect(path) as db:

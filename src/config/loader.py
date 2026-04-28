@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 @dataclass
 class TargetConfig:
     address: str
+    remark: str | None = None              # 备注，如 "EFO"
     trade_mode: str | None = None          # 不填则继承全局
     trade_ratio: float | None = None
     trade_fixed_usd: float | None = None
@@ -68,6 +69,7 @@ def _parse_targets(raw: list) -> list[TargetConfig]:
         elif isinstance(item, dict):
             result.append(TargetConfig(
                 address=item["address"].lower(),
+                remark=item.get("remark"),
                 trade_mode=item.get("trade_mode"),
                 trade_ratio=_maybe_float(item.get("trade_ratio")),
                 trade_fixed_usd=_maybe_float(item.get("trade_fixed_usd")),
@@ -81,6 +83,70 @@ def _maybe_float(v) -> float | None:
     if v is None:
         return None
     return float(v)
+
+
+def target_to_dict(t: TargetConfig) -> dict:
+    d = {"address": t.address}
+    if t.remark is not None:
+        d["remark"] = t.remark
+    if t.trade_mode is not None:
+        d["trade_mode"] = t.trade_mode
+    if t.trade_ratio is not None:
+        d["trade_ratio"] = t.trade_ratio
+    if t.trade_fixed_usd is not None:
+        d["trade_fixed_usd"] = t.trade_fixed_usd
+    if t.trade_max_usd is not None:
+        d["trade_max_usd"] = t.trade_max_usd
+    if t.trade_fixed_virtuals is not None:
+        d["trade_fixed_virtuals"] = t.trade_fixed_virtuals
+    return d
+
+
+def config_to_safe_dict(cfg: Config) -> dict:
+    """序列化配置为 dict（排除私密字段），用于 API 响应。"""
+    return {
+        "base_token": cfg.base_token,
+        "trade_mode": cfg.trade_mode,
+        "trade_ratio": cfg.trade_ratio,
+        "trade_fixed_usd": cfg.trade_fixed_usd,
+        "trade_max_usd": cfg.trade_max_usd,
+        "trade_fixed_virtuals": cfg.trade_fixed_virtuals,
+        "token_whitelist": cfg.token_whitelist,
+        "min_trade_usd": cfg.min_trade_usd,
+        "daily_loss_limit_usd": cfg.daily_loss_limit_usd,
+        "slippage": cfg.slippage,
+        "gas_limit_gwei": cfg.gas_limit_gwei,
+        "take_profit_roi": cfg.take_profit_roi,
+        "take_profit_check_sec": cfg.take_profit_check_sec,
+        "dry_run": cfg.dry_run,
+        "poll_interval_sec": cfg.poll_interval_sec,
+        "wallet_address": cfg.wallet_address,
+        "copy_targets": [target_to_dict(t) for t in cfg.copy_targets],
+    }
+
+
+def write_config(cfg: Config, yaml_path: str = "config.yaml") -> None:
+    """将 Config 对象写回 config.yaml。"""
+    data = {
+        "copy_targets": [target_to_dict(t) for t in cfg.copy_targets],
+        "base_token": cfg.base_token,
+        "trade_mode": cfg.trade_mode,
+        "trade_ratio": cfg.trade_ratio,
+        "trade_fixed_usd": cfg.trade_fixed_usd,
+        "trade_max_usd": cfg.trade_max_usd,
+        "trade_fixed_virtuals": cfg.trade_fixed_virtuals,
+        "token_whitelist": cfg.token_whitelist,
+        "min_trade_usd": cfg.min_trade_usd,
+        "daily_loss_limit_usd": cfg.daily_loss_limit_usd,
+        "slippage": cfg.slippage,
+        "gas_limit_gwei": cfg.gas_limit_gwei,
+        "take_profit_roi": cfg.take_profit_roi,
+        "take_profit_check_sec": cfg.take_profit_check_sec,
+        "dry_run": cfg.dry_run,
+        "poll_interval_sec": cfg.poll_interval_sec,
+    }
+    with open(yaml_path, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
 def _parse_yaml(y: dict) -> dict:

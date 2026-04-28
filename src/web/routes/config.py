@@ -233,3 +233,65 @@ async def update_params(params: dict):
         ydata[k] = v
     _write_yaml(ydata)
     return {"ok": True}
+
+
+# ─── 余额查询 ──────────────────────────────────────────────
+
+_BALANCE_ABI = '''[{"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}]'''
+
+_TOKEN_ADDRESSES = {
+    "ETH":  None,
+    "USDC": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "VIRTUAL": "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b",
+    "USDT": "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2",
+    "WETH": "0x4200000000000000000000000000000000000006",
+}
+
+
+@router.get("/config/balances")
+async def get_balances():
+    """查询执行钱包的 ETH 及代币余额。"""
+    from web3 import Web3
+    from dotenv import load_dotenv
+
+    load_dotenv(ENV_PATH)
+    rpc = os.environ.get("RPC_HTTP_URL", "https://mainnet.base.org")
+    wallet = os.environ.get("WALLET_ADDRESS", "")
+
+    if not wallet:
+        return {"balances": {}, "error": "未配置钱包地址"}
+
+    w3 = Web3(Web3.HTTPProvider(rpc))
+    if not w3.is_connected():
+        return {"balances": {}, "error": "RPC 连接失败"}
+
+    checksummed = Web3.to_checksum_address(wallet)
+    balances: dict[str, float | None] = {}
+
+    # ETH
+    try:
+        eth_wei = w3.eth.get_balance(checksummed)
+        balances["ETH"] = round(eth_wei / 1e18, 6)
+    except Exception as e:
+        logger.warning("查询 ETH 余额失败: %s", e)
+        balances["ETH"] = None
+
+    # 代币
+    for symbol, addr in _TOKEN_ADDRESSES.items():
+        if symbol == "ETH":
+            continue
+        try:
+            contract = w3.eth.contract(address=Web3.to_checksum_address(addr), abi=_BALANCE_ABI)
+            raw = contract.functions.balanceOf(checksummed).call()
+            decimals = 6 if symbol in ("USDC", "USDT") else 18
+            balances[symbol] = round(raw / 10 ** decimals, 6)
+        except Exception as e:
+            logger.warning("查询 %s 余额失败: %s", symbol, e)
+            balances[symbol] = None
+
+    cfg = load_config(YAML_PATH, ENV_PATH)
+    return {
+        "balances": balances,
+        "base_token": cfg.base_token,
+        "wallet_address": wallet,
+    }

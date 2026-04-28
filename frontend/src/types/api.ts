@@ -95,3 +95,9 @@ export interface PositionAllResponse {
 export interface Position {
   [key: string]: any
 }
+
+export interface BalancesResponse {
+  balances: Record<string, number | null>
+  base_token: string
+  wallet_address: string
+}

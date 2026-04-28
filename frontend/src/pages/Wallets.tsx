@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Pencil } from "lucide-react";
+import { Plus, Trash2, Pencil, Info } from "lucide-react";
 import { toast } from "sonner";
 import { fetchConfig, addTarget, deleteTarget, updateTarget } from "@/lib/api";
 import type { CopyTarget } from "@/types/api";
@@ -16,6 +16,13 @@ const MODE_OPTIONS = [
   { value: "ratio", label: "比例跟单" },
   { value: "fixed", label: "固定跟单" },
 ];
+
+function modeLabel(mode?: string): string {
+  if (mode === "ratio") return "比例跟单";
+  if (mode === "fixed") return "固定跟单";
+  if (mode === "monitor") return "仅监测";
+  return mode ?? "-";
+}
 
 export default function Wallets() {
   const qc = useQueryClient();
@@ -43,8 +50,8 @@ export default function Wallets() {
         address,
         remark: remark || undefined,
         trade_mode: mode,
-        trade_ratio: ratio ? parseFloat(ratio) : undefined,
-        trade_fixed_usd: fixedUsd ? parseFloat(fixedUsd) : undefined,
+        trade_ratio: mode === "ratio" && ratio ? parseFloat(ratio) : undefined,
+        trade_fixed_usd: mode === "fixed" && fixedUsd ? parseFloat(fixedUsd) : undefined,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["config"] });
@@ -101,6 +108,8 @@ export default function Wallets() {
   };
 
   const targets = config?.copy_targets ?? [];
+  const globalMode = config?.trade_mode ?? "";
+  const isGlobalMonitor = globalMode === "monitor";
 
   if (isLoading) return <LoadingState label="正在加载钱包列表..." />;
 
@@ -165,6 +174,20 @@ export default function Wallets() {
         }
       />
 
+      {/* 全局跟单状态 */}
+      <div className={`flex items-center gap-3 rounded-[16px] border p-4 ${isGlobalMonitor ? "border-[var(--warning)]/30 bg-[var(--warning-soft)]" : "border-[var(--success)]/30 bg-[var(--success-soft)]"}`}>
+        <Info className={`size-5 ${isGlobalMonitor ? "text-[var(--warning-foreground)]" : "text-[var(--success-foreground)]"}`} />
+        <div className="text-sm">
+          <span className="font-semibold">全局模式：</span>
+          <Badge variant={isGlobalMonitor ? "warning" : "success"}>{modeLabel(globalMode)}</Badge>
+          {isGlobalMonitor ? (
+            <span className="ml-2 text-[var(--warning-foreground)]">所有目标均不执行跟单，仅监测交易</span>
+          ) : (
+            <span className="ml-2 text-[var(--success-foreground)]">跟单已启用</span>
+          )}
+        </div>
+      </div>
+
       <SectionCard title="目标地址" description={targets.length > 0 ? `共 ${targets.length} 个地址` : undefined}>
         <Table>
           <TableHeader>
@@ -185,29 +208,36 @@ export default function Wallets() {
                 </TableCell>
               </TableRow>
             ) : (
-              targets.map((t: CopyTarget) => (
-                <TableRow key={t.address}>
-                  <TableCell className="font-mono text-xs">{t.address.slice(0, 12)}...{t.address.slice(-6)}</TableCell>
-                  <TableCell>{t.remark || "-"}</TableCell>
-                  <TableCell>
-                    <Badge variant={t.trade_mode === "monitor" ? "warning" : "success"}>
-                      {t.trade_mode || config?.trade_mode || "-"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{t.trade_ratio != null ? `${(t.trade_ratio * 100).toFixed(0)}%` : "-"}</TableCell>
-                  <TableCell>{t.trade_fixed_usd ? `$${t.trade_fixed_usd}` : "-"}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(t)}>
-                        <Pencil className="size-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => { if (confirm("确认删除此目标？")) delMut.mutate(t.address); }}>
-                        <Trash2 className="size-4 text-[var(--danger)]" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+              targets.map((t: CopyTarget) => {
+                const effectiveMode = t.trade_mode || globalMode;
+                const isOverridden = !!t.trade_mode && t.trade_mode !== globalMode;
+                return (
+                  <TableRow key={t.address}>
+                    <TableCell className="font-mono text-xs">{t.address.slice(0, 12)}...{t.address.slice(-6)}</TableCell>
+                    <TableCell>{t.remark || "-"}</TableCell>
+                    <TableCell>
+                      <Badge variant={effectiveMode === "monitor" ? "warning" : "success"}>
+                        {modeLabel(effectiveMode)}
+                      </Badge>
+                      {isOverridden && (
+                        <span className="ml-1.5 text-[10px] text-muted-foreground">独立</span>
+                      )}
+                    </TableCell>
+                    <TableCell>{t.trade_ratio != null ? `${(t.trade_ratio * 100).toFixed(0)}%` : "-"}</TableCell>
+                    <TableCell>{t.trade_fixed_usd ? `$${t.trade_fixed_usd}` : "-"}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => openEdit(t)}>
+                          <Pencil className="size-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => { if (confirm("确认删除此目标？")) delMut.mutate(t.address); }}>
+                          <Trash2 className="size-4 text-[var(--danger)]" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
@@ -231,6 +261,12 @@ export default function Wallets() {
                 <Select value={editMode} onChange={(e) => setEditMode(e.target.value)}>
                   {MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </Select>
+                {editMode === (config?.trade_mode ?? "monitor") && (
+                  <p className="text-xs text-muted-foreground">当前使用全局模式设置</p>
+                )}
+                {editMode !== (config?.trade_mode ?? "monitor") && editMode !== "monitor" && (
+                  <p className="text-xs text-[var(--warning-foreground)]">独立模式，覆盖全局设置</p>
+                )}
               </div>
               {editMode !== "monitor" && (
                 <>

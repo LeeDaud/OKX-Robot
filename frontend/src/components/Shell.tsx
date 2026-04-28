@@ -19,11 +19,11 @@ import { useTheme } from "@/components/theme-provider";
 import { useQueryClient } from "@tanstack/react-query";
 
 const navItems = [
-  { to: "/", label: "概览", icon: LayoutDashboard },
+  { to: "/", label: "运营概览", icon: LayoutDashboard },
   { to: "/wallets", label: "跟单钱包", icon: Wallet },
   { to: "/params", label: "跟单参数", icon: SlidersHorizontal },
   { to: "/wallet", label: "执行钱包", icon: UserCircle },
-  { to: "/positions", label: "持仓", icon: Package },
+  { to: "/positions", label: "实时持仓", icon: Package },
   { to: "/trades", label: "交易记录", icon: History },
 ];
 

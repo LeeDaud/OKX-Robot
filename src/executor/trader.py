@@ -118,6 +118,12 @@ class Trader:
         source_tx 用于发交易后立即持久化 tx_hash，支持 crash 恢复。
         """
         self.last_skip_reason = ""
+
+        if self._mode == "monitor":
+            self.last_skip_reason = "监测模式，跳过跟单"
+            logger.info("[SKIP] %s", self.last_skip_reason)
+            return (None, 0.0, 0)
+
         is_buy = swap.token_out.lower() not in STABLE_TOKENS
         payment_token = self._base_address if is_buy else swap.token_in
         target_token = swap.token_out if is_buy else self._base_address
@@ -439,6 +445,12 @@ class Trader:
         """止盈/回购卖出：将持仓代币换回稳定币。
         source_tx 用于发交易后立即持久化 tx_hash，支持 crash 恢复。"""
         self.last_skip_reason = ""
+
+        if self._mode == "monitor":
+            self.last_skip_reason = "监测模式，跳过卖出"
+            logger.info("[SKIP SELL] %s", self.last_skip_reason)
+            return None
+
         if not await self._check_gas():
             self.last_skip_reason = f"Gas 过高（>{self._gas_limit_gwei} gwei）"
             logger.info("[SKIP SELL] %s", self.last_skip_reason)

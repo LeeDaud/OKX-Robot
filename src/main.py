@@ -92,8 +92,8 @@ def validate_runtime_config(cfg: Config) -> list[str]:
         issues.append("copy_targets must contain at least one address")
     if cfg.base_token not in {"VIRTUAL", "USDC"}:
         issues.append(f"base_token must be 'VIRTUAL' or 'USDC', got '{cfg.base_token}'")
-    if cfg.trade_mode not in {"ratio", "fixed"}:
-        issues.append(f"trade_mode must be 'ratio' or 'fixed', got '{cfg.trade_mode}'")
+    if cfg.trade_mode not in {"ratio", "fixed", "monitor"}:
+        issues.append(f"trade_mode must be 'ratio', 'fixed', or 'monitor', got '{cfg.trade_mode}'")
     if cfg.trade_ratio <= 0:
         issues.append("trade_ratio must be > 0")
     if cfg.trade_fixed_usd <= 0:
@@ -140,9 +140,9 @@ def validate_runtime_config(cfg: Config) -> list[str]:
         if target.address in seen_addresses:
             issues.append(f"copy_targets contains duplicate address: {target.address}")
         seen_addresses.add(target.address)
-        if target.trade_mode is not None and target.trade_mode not in {"ratio", "fixed"}:
+        if target.trade_mode is not None and target.trade_mode not in {"ratio", "fixed", "monitor"}:
             issues.append(
-                f"copy_targets[{idx}] trade_mode must be 'ratio' or 'fixed', got '{target.trade_mode}'"
+                f"copy_targets[{idx}] trade_mode must be 'ratio', 'fixed', or 'monitor', got '{target.trade_mode}'"
             )
 
     return issues

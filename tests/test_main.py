@@ -52,6 +52,6 @@ def test_validate_runtime_config_rejects_invalid_values():
     cfg.slippage = 1.5
     cfg.poll_interval_sec = 0
     issues = validate_runtime_config(cfg)
-    assert "trade_mode must be 'ratio' or 'fixed', got 'invalid'" in issues
+    assert "trade_mode must be 'ratio', 'fixed', or 'monitor', got 'invalid'" in issues
     assert "slippage must be between 0 and 1" in issues
     assert "poll_interval_sec must be > 0" in issues

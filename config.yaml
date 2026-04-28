@@ -1,7 +1,9 @@
 # 跟单目标地址列表（每个地址可独立覆盖全局跟单金额配置）
 copy_targets:
-  # - address: "0xe56761c7681aa5cb414b57ba8d23577d30cdf466"
   - address: "0xe4d5be169574fc9e18edaa813790f079e1630b6d"
+    trade_mode: monitor
+  - address: "0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d"
+    trade_mode: monitor
 
 # 回购地址簿：回购地址买入指定代币时，立即卖出对应持仓
 # 格式："回购地址": "代币地址"

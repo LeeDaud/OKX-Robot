@@ -1,8 +1,39 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Copy, Check } from "lucide-react";
+import { toast } from "sonner";
 import { fetchPositionsAll } from "@/lib/api";
 import type { PositionAllResponse } from "@/types/api";
 import { PageHeader, SectionCard, MetricCard, LoadingState, EmptyState } from "@/components/app-primitives";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { tokenDisplayName, formatTokenAmount } from "@/lib/tokens";
+
+function CopyAddress({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+  const display = tokenDisplayName(address);
+  const full = address.toLowerCase();
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(full).then(() => {
+      setCopied(true);
+      toast.success("地址已复制");
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="font-mono text-xs font-semibold">{display}</span>
+      <button
+        onClick={handleCopy}
+        className="text-muted-foreground hover:text-foreground transition shrink-0"
+        title={full}
+      >
+        {copied ? <Check className="size-3 text-[var(--success)]" /> : <Copy className="size-3" />}
+      </button>
+    </span>
+  );
+}
 
 export default function Positions() {
   const { data, isLoading } = useQuery<PositionAllResponse>({
@@ -48,13 +79,17 @@ export default function Positions() {
             <TableBody>
               {open.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell className="font-mono text-xs font-semibold">
-                    {p.token_out?.slice(0, 10) || "-"}...
+                  <TableCell>
+                    <CopyAddress address={p.token_out || ""} />
                   </TableCell>
-                  <TableCell>{p.amount_out ? p.amount_out.toFixed(4) : "-"}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {p.amount_out ? formatTokenAmount(p.amount_out) : "-"}
+                  </TableCell>
                   <TableCell>${p.entry_price?.toFixed(6) ?? "-"}</TableCell>
                   <TableCell>${(p.filled_cost_usd ?? 0).toFixed(2)}</TableCell>
-                  <TableCell className="text-muted-foreground">待接入</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    —<span className="ml-1 text-[10px]">需链上报价</span>
+                  </TableCell>
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                     {p.created_at?.slice(11, 19) || "-"}
                   </TableCell>
@@ -84,10 +119,12 @@ export default function Positions() {
             <TableBody>
               {closed.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell className="font-mono text-xs font-semibold">
-                    {p.token_out?.slice(0, 10) || "-"}...
+                  <TableCell>
+                    <CopyAddress address={p.token_out || ""} />
                   </TableCell>
-                  <TableCell>{p.amount_out ? p.amount_out.toFixed(4) : "-"}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {p.amount_out ? formatTokenAmount(p.amount_out) : "-"}
+                  </TableCell>
                   <TableCell>${p.entry_price?.toFixed(6) ?? "-"}</TableCell>
                   <TableCell>${p.exit_price?.toFixed(6) ?? "-"}</TableCell>
                   <TableCell>

@@ -210,6 +210,7 @@ export default function Positions() {
             <TableHeader>
               <TableRow>
                 <TableHead>代币</TableHead>
+                <TableHead>名称</TableHead>
                 <TableHead>数量</TableHead>
                 <TableHead>入场价</TableHead>
                 <TableHead>出场价</TableHead>
@@ -222,6 +223,9 @@ export default function Positions() {
               {closed.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell><CopyAddress address={p.token_out || ""} /></TableCell>
+                  <TableCell className="font-mono text-xs font-semibold">
+                    {tokenDisplayName(p.token_out || "")}
+                  </TableCell>
                   <TableCell><AmountCell value={p.amount_out} /></TableCell>
                   <TableCell className="font-mono text-xs">${p.entry_price?.toFixed(6) ?? "-"}</TableCell>
                   <TableCell className="font-mono text-xs">${p.exit_price?.toFixed(6) ?? "-"}</TableCell>

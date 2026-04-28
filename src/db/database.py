@@ -209,6 +209,19 @@ async def get_open_positions(path: str = DB_PATH) -> list[dict]:
             return [dict(row) async for row in cur]
 
 
+async def get_closed_positions(path: str = DB_PATH) -> list[dict]:
+    """返回所有已平仓的买入记录（exit_price>0 且 status=success/dry_run）。"""
+    async with aiosqlite.connect(path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM copy_trades
+               WHERE side='buy' AND exit_price>0
+               AND status IN ('success', 'dry_run')
+               ORDER BY created_at DESC"""
+        ) as cur:
+            return [dict(row) async for row in cur]
+
+
 async def get_open_position_by_token(token: str, path: str = DB_PATH) -> Optional[dict]:
     """按 token_out 找最近一笔未平仓买入。"""
     async with aiosqlite.connect(path) as db:

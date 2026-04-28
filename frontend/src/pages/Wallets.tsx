@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil } from "lucide-react";
 import { toast } from "sonner";
-import { fetchConfig, addTarget, deleteTarget } from "@/lib/api";
+import { fetchConfig, addTarget, deleteTarget, updateTarget } from "@/lib/api";
 import type { CopyTarget } from "@/types/api";
 import { PageHeader, SectionCard, LoadingState } from "@/components/app-primitives";
 import { Button } from "@/components/ui/button";
@@ -11,21 +11,49 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input, Select } from "@/components/ui/input";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
+const MODE_OPTIONS = [
+  { value: "monitor", label: "监测" },
+  { value: "ratio", label: "比例跟单" },
+  { value: "fixed", label: "固定跟单" },
+];
+
 export default function Wallets() {
   const qc = useQueryClient();
   const { data: config, isLoading } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
-  const [open, setOpen] = useState(false);
+
+  // Add dialog state
+  const [addOpen, setAddOpen] = useState(false);
   const [address, setAddress] = useState("");
   const [remark, setRemark] = useState("");
   const [mode, setMode] = useState("monitor");
+  const [ratio, setRatio] = useState("");
+  const [fixedUsd, setFixedUsd] = useState("");
+
+  // Edit dialog state
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<CopyTarget | null>(null);
+  const [editRemark, setEditRemark] = useState("");
+  const [editMode, setEditMode] = useState("");
+  const [editRatio, setEditRatio] = useState("");
+  const [editFixedUsd, setEditFixedUsd] = useState("");
 
   const addMut = useMutation({
-    mutationFn: () => addTarget({ address, remark: remark || undefined, trade_mode: mode }),
+    mutationFn: () =>
+      addTarget({
+        address,
+        remark: remark || undefined,
+        trade_mode: mode,
+        trade_ratio: ratio ? parseFloat(ratio) : undefined,
+        trade_fixed_usd: fixedUsd ? parseFloat(fixedUsd) : undefined,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["config"] });
-      setOpen(false);
+      setAddOpen(false);
       setAddress("");
       setRemark("");
+      setMode("monitor");
+      setRatio("");
+      setFixedUsd("");
       toast.success("跟单钱包已添加");
     },
     onError: (e: Error) => toast.error(`添加失败: ${e.message}`),
@@ -40,6 +68,38 @@ export default function Wallets() {
     onError: (e: Error) => toast.error(`删除失败: ${e.message}`),
   });
 
+  const editMut = useMutation({
+    mutationFn: (params: { address: string; data: Partial<CopyTarget> }) =>
+      updateTarget(params.address, params.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["config"] });
+      setEditOpen(false);
+      toast.success("已更新");
+    },
+    onError: (e: Error) => toast.error(`更新失败: ${e.message}`),
+  });
+
+  const openEdit = (t: CopyTarget) => {
+    setEditTarget(t);
+    setEditRemark(t.remark ?? "");
+    setEditMode(t.trade_mode ?? config?.trade_mode ?? "monitor");
+    setEditRatio(t.trade_ratio != null ? String(t.trade_ratio) : "");
+    setEditFixedUsd(t.trade_fixed_usd != null ? String(t.trade_fixed_usd) : "");
+    setEditOpen(true);
+  };
+
+  const doEdit = () => {
+    if (!editTarget) return;
+    const data: Partial<CopyTarget> = {};
+    if (editRemark !== (editTarget.remark ?? "")) data.remark = editRemark || undefined;
+    if (editMode !== (editTarget.trade_mode ?? config?.trade_mode)) data.trade_mode = editMode;
+    const r = editRatio ? parseFloat(editRatio) : undefined;
+    if (r !== editTarget.trade_ratio) data.trade_ratio = r;
+    const f = editFixedUsd ? parseFloat(editFixedUsd) : undefined;
+    if (f !== editTarget.trade_fixed_usd) data.trade_fixed_usd = f;
+    editMut.mutate({ address: editTarget.address, data });
+  };
+
   const targets = config?.copy_targets ?? [];
 
   if (isLoading) return <LoadingState label="正在加载钱包列表..." />;
@@ -50,7 +110,7 @@ export default function Wallets() {
         title="跟单钱包"
         description="管理被监控的链上钱包地址"
         actions={
-          <Dialog open={open} onOpenChange={setOpen}>
+          <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="size-4" />
@@ -65,33 +125,36 @@ export default function Wallets() {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">地址</label>
-                  <Input
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="0x..."
-                    className="font-mono"
-                  />
+                  <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="0x..." className="font-mono" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">备注</label>
-                  <Input
-                    value={remark}
-                    onChange={(e) => setRemark(e.target.value)}
-                    placeholder="可选标识"
-                  />
+                  <Input value={remark} onChange={(e) => setRemark(e.target.value)} placeholder="可选标识" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">模式</label>
+                  <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">跟单模式</label>
                   <Select value={mode} onChange={(e) => setMode(e.target.value)}>
-                    <option value="monitor">监测</option>
-                    <option value="ratio">比例跟单</option>
-                    <option value="fixed">固定跟单</option>
+                    {MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </Select>
                 </div>
+                {mode !== "monitor" && (
+                  <>
+                    {mode === "ratio" && (
+                      <div className="space-y-2">
+                        <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">跟单比例</label>
+                        <Input type="number" step="0.01" value={ratio} onChange={(e) => setRatio(e.target.value)} placeholder="0.5" />
+                      </div>
+                    )}
+                    {mode === "fixed" && (
+                      <div className="space-y-2">
+                        <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">固定金额 (USDC)</label>
+                        <Input type="number" value={fixedUsd} onChange={(e) => setFixedUsd(e.target.value)} placeholder="50" />
+                      </div>
+                    )}
+                  </>
+                )}
                 <div className="flex justify-end gap-3 pt-2">
-                  <DialogClose asChild>
-                    <Button variant="secondary">取消</Button>
-                  </DialogClose>
+                  <DialogClose asChild><Button variant="secondary">取消</Button></DialogClose>
                   <Button onClick={() => addMut.mutate()} disabled={!address || addMut.isPending}>
                     {addMut.isPending ? "添加中..." : "添加"}
                   </Button>
@@ -111,7 +174,7 @@ export default function Wallets() {
               <TableHead>模式</TableHead>
               <TableHead>比例</TableHead>
               <TableHead>固定金额</TableHead>
-              <TableHead className="w-16">操作</TableHead>
+              <TableHead className="w-24">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -124,9 +187,7 @@ export default function Wallets() {
             ) : (
               targets.map((t: CopyTarget) => (
                 <TableRow key={t.address}>
-                  <TableCell className="font-mono text-xs">
-                    {t.address.slice(0, 12)}...{t.address.slice(-6)}
-                  </TableCell>
+                  <TableCell className="font-mono text-xs">{t.address.slice(0, 12)}...{t.address.slice(-6)}</TableCell>
                   <TableCell>{t.remark || "-"}</TableCell>
                   <TableCell>
                     <Badge variant={t.trade_mode === "monitor" ? "warning" : "success"}>
@@ -136,15 +197,14 @@ export default function Wallets() {
                   <TableCell>{t.trade_ratio != null ? `${(t.trade_ratio * 100).toFixed(0)}%` : "-"}</TableCell>
                   <TableCell>{t.trade_fixed_usd ? `$${t.trade_fixed_usd}` : "-"}</TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        if (confirm("确认删除此目标？")) delMut.mutate(t.address);
-                      }}
-                    >
-                      <Trash2 className="size-4 text-[var(--danger)]" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(t)}>
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => { if (confirm("确认删除此目标？")) delMut.mutate(t.address); }}>
+                        <Trash2 className="size-4 text-[var(--danger)]" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
@@ -152,6 +212,52 @@ export default function Wallets() {
           </TableBody>
         </Table>
       </SectionCard>
+
+      {/* Edit Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>编辑跟单钱包</DialogTitle>
+            <DialogDescription>{editTarget?.address ? `${editTarget.address.slice(0, 12)}...${editTarget.address.slice(-6)}` : ""}</DialogDescription>
+          </DialogHeader>
+          {editTarget && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">备注</label>
+                <Input value={editRemark} onChange={(e) => setEditRemark(e.target.value)} placeholder="可选标识" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">跟单模式</label>
+                <Select value={editMode} onChange={(e) => setEditMode(e.target.value)}>
+                  {MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </Select>
+              </div>
+              {editMode !== "monitor" && (
+                <>
+                  {editMode === "ratio" && (
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">跟单比例</label>
+                      <Input type="number" step="0.01" value={editRatio} onChange={(e) => setEditRatio(e.target.value)} placeholder="0.5" />
+                    </div>
+                  )}
+                  {editMode === "fixed" && (
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">固定金额 (USDC)</label>
+                      <Input type="number" value={editFixedUsd} onChange={(e) => setEditFixedUsd(e.target.value)} placeholder="50" />
+                    </div>
+                  )}
+                </>
+              )}
+              <div className="flex justify-end gap-3 pt-2">
+                <DialogClose asChild><Button variant="secondary">取消</Button></DialogClose>
+                <Button onClick={doEdit} disabled={editMut.isPending}>
+                  {editMut.isPending ? "保存中..." : "保存"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

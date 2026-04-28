@@ -34,6 +34,32 @@ def _write_yaml(data: dict) -> None:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
+def _read_env_lines() -> list[str]:
+    with open(ENV_PATH, "r", encoding="utf-8") as f:
+        return f.readlines()
+
+
+def _write_env_lines(lines: list[str]) -> None:
+    with open(ENV_PATH, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+
+def _update_env_var(key: str, value: str) -> None:
+    """更新 .env 文件中某个变量的值（保留注释和顺序）。"""
+    lines = _read_env_lines()
+    found = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(f"{key}="):
+            lines[i] = f"{key}={value}\n"
+            found = True
+            break
+    if not found:
+        lines.append(f"{key}={value}\n")
+    _write_env_lines(lines)
+    os.environ[key] = value
+
+
 @router.get("/config")
 async def get_config():
     """返回完整配置（不含密钥）。"""
@@ -68,6 +94,14 @@ async def add_target(target: TargetUpdate):
         entry["remark"] = target.remark
     if target.trade_mode:
         entry["trade_mode"] = target.trade_mode
+    if target.trade_ratio is not None:
+        entry["trade_ratio"] = target.trade_ratio
+    if target.trade_fixed_usd is not None:
+        entry["trade_fixed_usd"] = target.trade_fixed_usd
+    if target.trade_max_usd is not None:
+        entry["trade_max_usd"] = target.trade_max_usd
+    if target.trade_fixed_virtuals is not None:
+        entry["trade_fixed_virtuals"] = target.trade_fixed_virtuals
     targets.append(entry)
     ydata["copy_targets"] = targets
     _write_yaml(ydata)
@@ -117,6 +151,16 @@ async def delete_target(address: str):
     return {"ok": True}
 
 
+class WalletUpdate(BaseModel):
+    wallet_address: str | None = None
+    rpc_http_url: str | None = None
+    rpc_ws_url: str | None = None
+    private_key: str | None = None
+    okx_api_key: str | None = None
+    okx_secret_key: str | None = None
+    okx_passphrase: str | None = None
+
+
 @router.get("/config/wallet")
 async def get_wallet():
     """返回执行钱包信息（不含私钥）。"""
@@ -125,7 +169,41 @@ async def get_wallet():
     return {
         "wallet_address": os.environ.get("WALLET_ADDRESS", ""),
         "rpc_http_url": os.environ.get("RPC_HTTP_URL", ""),
+        "rpc_ws_url": os.environ.get("RPC_WS_URL", ""),
+        "has_private_key": bool(os.environ.get("PRIVATE_KEY")),
+        "has_okx_api_key": bool(os.environ.get("OKX_API_KEY")),
     }
+
+
+@router.put("/config/wallet")
+async def update_wallet(wallet: WalletUpdate):
+    """更新执行钱包配置（写入 .env，重启后生效）。"""
+    changes = {}
+    if wallet.wallet_address is not None:
+        _update_env_var("WALLET_ADDRESS", wallet.wallet_address)
+        changes["wallet_address"] = wallet.wallet_address
+    if wallet.rpc_http_url is not None:
+        _update_env_var("RPC_HTTP_URL", wallet.rpc_http_url)
+        changes["rpc_http_url"] = wallet.rpc_http_url
+    if wallet.rpc_ws_url is not None:
+        _update_env_var("RPC_WS_URL", wallet.rpc_ws_url)
+        changes["rpc_ws_url"] = wallet.rpc_ws_url
+    if wallet.private_key is not None:
+        _update_env_var("PRIVATE_KEY", wallet.private_key)
+        changes["private_key"] = "***updated***"
+    if wallet.okx_api_key is not None:
+        _update_env_var("OKX_API_KEY", wallet.okx_api_key)
+        changes["okx_api_key"] = "***updated***"
+    if wallet.okx_secret_key is not None:
+        _update_env_var("OKX_SECRET_KEY", wallet.okx_secret_key)
+        changes["okx_secret_key"] = "***updated***"
+    if wallet.okx_passphrase is not None:
+        _update_env_var("OKX_PASSPHRASE", wallet.okx_passphrase)
+        changes["okx_passphrase"] = "***updated***"
+    if not changes:
+        raise HTTPException(400, "未提供任何可修改的字段")
+    logger.info("Wallet config updated: %s", changes)
+    return {"ok": True, "updated": list(changes.keys())}
 
 
 @router.put("/config/params")

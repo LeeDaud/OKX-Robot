@@ -1,4 +1,4 @@
-import type { AppConfig, WalletInfo, TradeRecord, TradeStats, Position, CopyTarget } from '../types/api'
+import type { AppConfig, WalletInfo, TradeRecord, TradeStats, Position, PositionAllResponse, CopyTarget } from '@/types/api'
 
 const BASE = '/api'
 
@@ -41,6 +41,13 @@ export function fetchWallet(): Promise<WalletInfo> {
   return request('/config/wallet')
 }
 
+export function updateWallet(wallet: Partial<WalletInfo & { private_key?: string; okx_api_key?: string; okx_secret_key?: string; okx_passphrase?: string }>): Promise<{ ok: boolean; updated: string[] }> {
+  return request('/config/wallet', {
+    method: 'PUT',
+    body: JSON.stringify(wallet),
+  })
+}
+
 export function updateParams(params: Record<string, unknown>): Promise<{ ok: boolean }> {
   return request('/config/params', {
     method: 'PUT',
@@ -59,4 +66,8 @@ export function fetchTradeStats(): Promise<TradeStats> {
 
 export function fetchPositions(): Promise<{ positions: Position[] }> {
   return request('/positions')
+}
+
+export function fetchPositionsAll(): Promise<PositionAllResponse> {
+  return request('/positions/all')
 }

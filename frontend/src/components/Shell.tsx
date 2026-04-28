@@ -6,6 +6,7 @@ import {
   SlidersHorizontal,
   UserCircle,
   History,
+  Package,
   MoonStar,
   SunMedium,
   RefreshCcw,
@@ -22,6 +23,7 @@ const navItems = [
   { to: "/wallets", label: "跟单钱包", icon: Wallet },
   { to: "/params", label: "跟单参数", icon: SlidersHorizontal },
   { to: "/wallet", label: "执行钱包", icon: UserCircle },
+  { to: "/positions", label: "持仓", icon: Package },
   { to: "/trades", label: "交易记录", icon: History },
 ];
 

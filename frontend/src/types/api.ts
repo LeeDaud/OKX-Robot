@@ -32,6 +32,9 @@ export interface AppConfig {
 export interface WalletInfo {
   wallet_address: string
   rpc_http_url: string
+  rpc_ws_url?: string
+  has_private_key?: boolean
+  has_okx_api_key?: boolean
 }
 
 export interface TradeRecord {
@@ -59,6 +62,33 @@ export interface TradeStats {
   today: { total: number; success: number; pnl: number }
   all: { total_trades: number; total_invested: number; realized_pnl: number }
   today_pnl: number
+}
+
+export interface PositionRecord {
+  id: number
+  source_tx: string
+  token_in: string
+  token_out: string
+  amount_in: string
+  amount_out: number
+  entry_price: number
+  exit_price: number
+  roi_pct: number
+  pnl: number
+  status: string
+  created_at: string
+  filled_cost_usd?: number
+}
+
+export interface PositionAllResponse {
+  open: PositionRecord[]
+  closed: PositionRecord[]
+  summary: {
+    open_count: number
+    closed_count: number
+    total_invested_open: number
+    realized_pnl: number
+  }
 }
 
 export interface Position {

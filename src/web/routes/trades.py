@@ -5,8 +5,8 @@ import logging
 
 from fastapi import APIRouter, Query
 from src.db.database import (
-    get_all_trades, get_open_positions, get_today_stats,
-    get_all_stats, get_today_pnl,
+    get_all_trades, get_open_positions, get_closed_positions,
+    get_today_stats, get_all_stats, get_today_pnl,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,31 @@ async def trade_stats():
 
 @router.get("/positions")
 async def positions():
-    """返回当前持仓。"""
+    """返回当前持仓（兼容旧版）。"""
     open_positions = await get_open_positions()
     return {"positions": open_positions}
+
+
+@router.get("/positions/all")
+async def positions_all():
+    """返回全部持仓：未平仓 + 已平仓 + 汇总。"""
+    open_pos = await get_open_positions()
+    closed_pos = await get_closed_positions()
+
+    total_invested_open = sum(
+        p.get("filled_cost_usd") or 0 for p in open_pos
+    )
+    realized_pnl = sum(
+        p.get("pnl") or 0 for p in closed_pos
+    )
+
+    return {
+        "open": open_pos,
+        "closed": closed_pos,
+        "summary": {
+            "open_count": len(open_pos),
+            "closed_count": len(closed_pos),
+            "total_invested_open": total_invested_open,
+            "realized_pnl": realized_pnl,
+        },
+    }

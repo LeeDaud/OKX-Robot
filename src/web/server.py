@@ -13,6 +13,8 @@ from src.web.routes import config, trades, positions
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from dotenv import load_dotenv
+    load_dotenv()
     yield
 
 

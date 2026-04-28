@@ -174,8 +174,6 @@ class WalletUpdate(BaseModel):
 @router.get("/config/wallet")
 async def get_wallet():
     """返回执行钱包信息（不含私钥）。"""
-    from dotenv import load_dotenv
-    load_dotenv(ENV_PATH)
     return {
         "wallet_address": os.environ.get("WALLET_ADDRESS", ""),
         "rpc_http_url": os.environ.get("RPC_HTTP_URL", ""),
@@ -252,9 +250,7 @@ _TOKEN_ADDRESSES = {
 async def get_balances():
     """查询执行钱包的 ETH 及代币余额。"""
     from web3 import Web3
-    from dotenv import load_dotenv
 
-    load_dotenv(ENV_PATH)
     rpc = os.environ.get("RPC_HTTP_URL", "https://mainnet.base.org")
     wallet = os.environ.get("WALLET_ADDRESS", "")
 

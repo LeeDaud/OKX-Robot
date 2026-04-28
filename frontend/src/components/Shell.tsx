@@ -30,11 +30,7 @@ const navItems = [
 function BrandBlock({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`flex items-center gap-4 ${compact ? "justify-center" : ""}`}>
-      <div className="theme-brand-badge flex size-12 shrink-0 items-center justify-center rounded-[20px]">
-        <div className="flex size-8 items-center justify-center rounded-[12px] bg-primary/20 text-sm font-bold text-primary">
-          AT
-        </div>
-      </div>
+      <img src="/auto-trader/brand-icon.svg" alt="AT" className="size-12 shrink-0" />
       {compact ? null : (
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/80">
@@ -109,11 +105,7 @@ function TopBar({ onCycleSidebar, onOpenMobile }: { onCycleSidebar: () => void; 
           <Button variant="secondary" size="icon" className="lg:hidden" onClick={onOpenMobile}>
             <Menu className="size-4" />
           </Button>
-          <div className="theme-brand-badge flex size-11 items-center justify-center rounded-[18px]">
-            <div className="flex size-7 items-center justify-center rounded-[10px] bg-primary/20 text-xs font-bold text-primary">
-              AT
-            </div>
-          </div>
+          <img src="/auto-trader/brand-icon.svg" alt="AT" className="size-11 shrink-0" />
           <div className="hidden min-w-0 sm:block">
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/80">Auto Trader</div>
             <div className="text-sm font-semibold tracking-[-0.03em]">管理面板</div>

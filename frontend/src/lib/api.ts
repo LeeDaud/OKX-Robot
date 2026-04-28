@@ -73,7 +73,7 @@ export function fetchPositionsAll(): Promise<PositionAllResponse> {
 }
 
 export function refreshPositionsPrices(): Promise<{
-  prices: Record<string, { current_price: number | null; decimals: number }>
+  tokens: Record<string, { symbol: string | null; decimals: number; current_price: number | null }>
   positions: Record<string, {
     amount: number
     cost_basis_usd: number
@@ -82,6 +82,7 @@ export function refreshPositionsPrices(): Promise<{
     unrealized_pnl: number | null
     roi_pct: number | null
   }>
+  error?: string
 }> {
   return request('/positions/refresh-prices', { method: 'POST' })
 }

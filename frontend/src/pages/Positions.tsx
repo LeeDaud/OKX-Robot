@@ -141,11 +141,11 @@ export default function Positions() {
           <MetricCard label="当前持仓" value={String(summary.open_count)} hint="未平仓数量" />
           <MetricCard label="投入本金" value={`$${summary.total_invested_open.toFixed(2)}`} hint="当前持仓总投入" />
           <MetricCard label="已平仓" value={String(summary.closed_count)} hint="历史平仓笔数" />
-          <MetricCard label="已实现 PnL" value={`$${summary.realized_pnl.toFixed(2)}`} hint="全部已实现盈亏" tone={summary.realized_pnl >= 0 ? "success" : "danger"} />
+          <MetricCard label="已实现 PnL" value={`${summary.realized_pnl >= 0 ? "+$" : "-$"}${Math.abs(summary.realized_pnl).toFixed(2)}`} hint="全部已实现盈亏" tone={summary.realized_pnl >= 0 ? "success" : "danger"} />
           {totalUnrealizedPnl !== null && (
             <MetricCard
               label="未实现 PnL"
-              value={`$${totalUnrealizedPnl.toFixed(2)}`}
+              value={`${totalUnrealizedPnl >= 0 ? "+$" : "-$"}${Math.abs(totalUnrealizedPnl).toFixed(2)}`}
               hint="当前持仓浮动盈亏"
               tone={totalUnrealizedPnl >= 0 ? "success" : "danger"}
             />
@@ -162,6 +162,7 @@ export default function Positions() {
               <TableRow>
                 <TableHead>代币</TableHead>
                 <TableHead>名称</TableHead>
+                <TableHead>来源钱包</TableHead>
                 <TableHead>数量</TableHead>
                 <TableHead>入场价</TableHead>
                 <TableHead>投入成本</TableHead>
@@ -182,6 +183,7 @@ export default function Positions() {
                     <TableCell className="font-mono text-xs font-semibold">
                       {ti?.symbol || tokenDisplayName(p.token_out || "")}
                     </TableCell>
+                    <TableCell><CopyAddress address={p.source_addr || ""} /></TableCell>
                     <TableCell><AmountCell value={pd?.amount ?? p.amount_out} /></TableCell>
                     <TableCell className="font-mono text-xs">${p.entry_price?.toFixed(6) ?? "-"}</TableCell>
                     <TableCell><DollarCell value={p.filled_cost_usd} /></TableCell>
@@ -211,6 +213,7 @@ export default function Positions() {
               <TableRow>
                 <TableHead>代币</TableHead>
                 <TableHead>名称</TableHead>
+                <TableHead>来源钱包</TableHead>
                 <TableHead>数量</TableHead>
                 <TableHead>入场价</TableHead>
                 <TableHead>出场价</TableHead>
@@ -226,6 +229,7 @@ export default function Positions() {
                   <TableCell className="font-mono text-xs font-semibold">
                     {tokenDisplayName(p.token_out || "")}
                   </TableCell>
+                  <TableCell><CopyAddress address={p.source_addr || ""} /></TableCell>
                   <TableCell><AmountCell value={p.amount_out} /></TableCell>
                   <TableCell className="font-mono text-xs">${p.entry_price?.toFixed(6) ?? "-"}</TableCell>
                   <TableCell className="font-mono text-xs">${p.exit_price?.toFixed(6) ?? "-"}</TableCell>

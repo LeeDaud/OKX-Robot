@@ -67,6 +67,7 @@ export interface TradeStats {
 export interface PositionRecord {
   id: number
   source_tx: string
+  source_addr: string
   token_in: string
   token_out: string
   amount_in: string

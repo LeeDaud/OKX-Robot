@@ -12,6 +12,7 @@ import {
   RefreshCcw,
   Menu,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Sheet, SheetContent } from "@/components/ui/dialog";
@@ -117,7 +118,7 @@ function TopBar({ onCycleSidebar, onOpenMobile }: { onCycleSidebar: () => void; 
             {theme === "light" ? <MoonStar className="size-4" /> : <SunMedium className="size-4" />}
             {theme === "light" ? "深色模式" : "浅色模式"}
           </Button>
-          <Button variant="outline" onClick={() => queryClient.refetchQueries({ type: 'active' })}>
+          <Button variant="outline" onClick={async () => { await queryClient.refetchQueries({ type: 'active' }); toast.success("数据已刷新"); }}>
             <RefreshCcw className="size-4" />
           </Button>
         </div>

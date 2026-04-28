@@ -35,6 +35,7 @@ export default function Wallets() {
   const [mode, setMode] = useState("monitor");
   const [ratio, setRatio] = useState("");
   const [fixedUsd, setFixedUsd] = useState("");
+  const [fixedVirtuals, setFixedVirtuals] = useState("");
 
   // Edit dialog state
   const [editOpen, setEditOpen] = useState(false);
@@ -43,6 +44,7 @@ export default function Wallets() {
   const [editMode, setEditMode] = useState("");
   const [editRatio, setEditRatio] = useState("");
   const [editFixedUsd, setEditFixedUsd] = useState("");
+  const [editFixedVirtuals, setEditFixedVirtuals] = useState("");
 
   const addMut = useMutation({
     mutationFn: () =>
@@ -52,6 +54,7 @@ export default function Wallets() {
         trade_mode: mode,
         trade_ratio: mode === "ratio" && ratio ? parseFloat(ratio) : undefined,
         trade_fixed_usd: mode === "fixed" && fixedUsd ? parseFloat(fixedUsd) : undefined,
+        trade_fixed_virtuals: mode === "fixed" && fixedVirtuals ? parseFloat(fixedVirtuals) : undefined,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["config"] });
@@ -61,6 +64,7 @@ export default function Wallets() {
       setMode("monitor");
       setRatio("");
       setFixedUsd("");
+      setFixedVirtuals("");
       toast.success("跟单钱包已添加");
     },
     onError: (e: Error) => toast.error(`添加失败: ${e.message}`),
@@ -92,6 +96,7 @@ export default function Wallets() {
     setEditMode(t.trade_mode ?? config?.trade_mode ?? "monitor");
     setEditRatio(t.trade_ratio != null ? String(t.trade_ratio) : "");
     setEditFixedUsd(t.trade_fixed_usd != null ? String(t.trade_fixed_usd) : "");
+    setEditFixedVirtuals(t.trade_fixed_virtuals != null ? String(t.trade_fixed_virtuals) : "");
     setEditOpen(true);
   };
 
@@ -104,6 +109,8 @@ export default function Wallets() {
     if (r !== editTarget.trade_ratio) data.trade_ratio = r;
     const f = editFixedUsd ? parseFloat(editFixedUsd) : undefined;
     if (f !== editTarget.trade_fixed_usd) data.trade_fixed_usd = f;
+    const v = editFixedVirtuals ? parseFloat(editFixedVirtuals) : undefined;
+    if (v !== editTarget.trade_fixed_virtuals) data.trade_fixed_virtuals = v;
     editMut.mutate({ address: editTarget.address, data });
   };
 
@@ -155,10 +162,16 @@ export default function Wallets() {
                       </div>
                     )}
                     {mode === "fixed" && (
-                      <div className="space-y-2">
-                        <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">固定金额 (USDC)</label>
-                        <Input type="number" value={fixedUsd} onChange={(e) => setFixedUsd(e.target.value)} placeholder="50" />
-                      </div>
+                      <>
+                        <div className="space-y-2">
+                          <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">固定金额 (USDC)</label>
+                          <Input type="number" value={fixedUsd} onChange={(e) => setFixedUsd(e.target.value)} placeholder="50" />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">固定 VIRTUAL 数量</label>
+                          <Input type="number" value={fixedVirtuals} onChange={(e) => setFixedVirtuals(e.target.value)} placeholder="30" />
+                        </div>
+                      </>
                     )}
                   </>
                 )}
@@ -196,14 +209,15 @@ export default function Wallets() {
               <TableHead>备注</TableHead>
               <TableHead>模式</TableHead>
               <TableHead>比例</TableHead>
-              <TableHead>固定金额</TableHead>
+              <TableHead>固定 USDC</TableHead>
+              <TableHead>固定 VIRTUAL</TableHead>
               <TableHead className="w-24">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {targets.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                   暂无跟单钱包，点击右上角添加
                 </TableCell>
               </TableRow>
@@ -277,10 +291,16 @@ export default function Wallets() {
                     </div>
                   )}
                   {editMode === "fixed" && (
-                    <div className="space-y-2">
-                      <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">固定金额 (USDC)</label>
-                      <Input type="number" value={editFixedUsd} onChange={(e) => setEditFixedUsd(e.target.value)} placeholder="50" />
-                    </div>
+                    <>
+                      <div className="space-y-2">
+                        <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">固定金额 (USDC)</label>
+                        <Input type="number" value={editFixedUsd} onChange={(e) => setEditFixedUsd(e.target.value)} placeholder="50" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">固定 VIRTUAL 数量</label>
+                        <Input type="number" value={editFixedVirtuals} onChange={(e) => setEditFixedVirtuals(e.target.value)} placeholder="30" />
+                      </div>
+                    </>
                   )}
                 </>
               )}

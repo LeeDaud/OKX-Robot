@@ -128,7 +128,7 @@ function TopBar({ onCycleSidebar, onOpenMobile }: { onCycleSidebar: () => void; 
 }
 
 export default function Shell() {
-  const [sidebarMode, setSidebarMode] = useState<"expanded" | "rail">("expanded");
+  const [sidebarMode, setSidebarMode] = useState<"expanded" | "rail" | "hidden">("expanded");
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
 
@@ -136,16 +136,18 @@ export default function Shell() {
     <div className="min-h-screen px-4 py-4 lg:px-6 lg:py-6">
       <div
         className={`mx-auto grid max-w-[1800px] gap-5 ${
-          sidebarMode === "expanded" ? "lg:grid-cols-[300px_minmax(0,1fr)]" : "lg:grid-cols-[96px_minmax(0,1fr)]"
+          sidebarMode === "expanded" ? "lg:grid-cols-[300px_minmax(0,1fr)]" : sidebarMode === "rail" ? "lg:grid-cols-[96px_minmax(0,1fr)]" : "lg:grid-cols-1"
         }`}
       >
-        <div className="hidden lg:block">
-          <SidebarPanel mode={sidebarMode} />
-        </div>
+        {sidebarMode !== "hidden" && (
+          <div className="hidden lg:block">
+            <SidebarPanel mode={sidebarMode} />
+          </div>
+        )}
 
         <div className="flex min-h-[calc(100vh-2rem)] flex-col gap-5">
           <TopBar
-            onCycleSidebar={() => setSidebarMode((prev) => (prev === "expanded" ? "rail" : "expanded"))}
+            onCycleSidebar={() => setSidebarMode((prev) => prev === "expanded" ? "rail" : prev === "rail" ? "hidden" : "expanded")}
             onOpenMobile={() => setMobileOpen(true)}
           />
           <main className="flex-1">

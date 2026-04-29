@@ -86,6 +86,10 @@ class TakeProfitMonitor:
             return
 
         tx = await trader.sell(token, USDC_BASE, int(amount_out), source_tx=pos.get("source_tx", ""))
+        if tx is None:
+            logger.info("Take profit sell skipped: %s", trader.last_skip_reason)
+            return
+
         pnl = current_usd - cost_usd
 
         await close_position(

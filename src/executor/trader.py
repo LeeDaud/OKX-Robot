@@ -64,6 +64,7 @@ ERC20_BALANCE_ABI = [
 ]
 
 GAS_LIMIT_MULTIPLIER = 1.2
+MAX_UINT256 = 2**256 - 1
 
 STABLE_TOKENS = {USDC_BASE.lower(), USDT_BASE.lower(), VIRTUALS_BASE.lower()}
 
@@ -334,7 +335,7 @@ class Trader:
                 AsyncWeb3.to_checksum_address(self._wallet)
             )
             approve_tx = await contract.functions.approve(
-                AsyncWeb3.to_checksum_address(spender), amount
+                AsyncWeb3.to_checksum_address(spender), MAX_UINT256
             ).build_transaction({
                 "from": AsyncWeb3.to_checksum_address(self._wallet),
                 "nonce": nonce,
@@ -429,17 +430,21 @@ class Trader:
         if tx_data is None:
             return None
 
+        tx = tx_data.get("tx", {})
+
         # OKX V6 可能返回 dexTokenApproveAddress，需要先 approve 该地址
-        approve_addr = tx_data.get("dexTokenApproveAddress", "")
+        # OKX V6 实测对于 VIRTUAL 等 ERC20 代币返回空地址，此时 fallback 到 tx.to（DEX Router）
+        approve_addr = tx_data.get("dexTokenApproveAddress", "") or tx.get("to", "")
         if approve_addr:
             need_approve = await self._check_and_approve(
                 token_in, approve_addr, amount_in
             )
-            if need_approve and not await self._approve_and_wait(token_in, approve_addr, amount_in):
-                logger.warning("[SKIP] approve 失败")
-                return None
+            if need_approve:
+                logger.info("需要 approve %s -> %s，额度 %d", token_in[:12], approve_addr[:12], amount_in)
+                if not await self._approve_and_wait(token_in, approve_addr, amount_in):
+                    logger.warning("[SKIP] approve 失败")
+                    return None
 
-        tx = tx_data.get("tx", {})
         # OKX 返回的数字字段全是字符串，需要转 int
         for key in ("gas", "gasPrice", "maxPriorityFeePerGas", "value", "maxFeePerGas"):
             val = tx.get(key)
@@ -450,9 +455,12 @@ class Trader:
             if isinstance(tx[key], str) and tx[key] == "":
                 del tx[key]
         # EIP-1559 模式下需要 maxFeePerGas 和 maxPriorityFeePerGas
+        # 注意：OKX 返回 gasPrice + maxPriorityFeePerGas 但不含 maxFeePerGas，需要补全
         if "maxPriorityFeePerGas" in tx:
+            tx["type"] = 2
             if "gasPrice" in tx:
-                tx["maxFeePerGas"] = int(tx["gasPrice"])
+                if "maxFeePerGas" not in tx or tx["maxFeePerGas"] is None:
+                    tx["maxFeePerGas"] = int(tx["gasPrice"])
                 del tx["gasPrice"]
             elif "maxFeePerGas" not in tx:
                 tx["maxFeePerGas"] = tx["maxPriorityFeePerGas"]

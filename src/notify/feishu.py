@@ -109,6 +109,7 @@ class FeishuNotifier:
         amount_unit: str,
         side: str,
         auto_followed: bool,
+        wallet_label: str = "",
     ) -> None:
         now_cst = datetime.now(CST).strftime("%m-%d %H:%M")
         view_token = token_out if side == "buy" else token_in
@@ -122,10 +123,14 @@ class FeishuNotifier:
 
         amount_str = f"${amount_display:.2f} {amount_unit}" if amount_unit == "USDC" else f"{amount_display:.4f} {amount_unit}"
 
+        header_title = f"{symbol_in} → {symbol_out}"
+        if wallet_label:
+            header_title = f"{wallet_label} | {header_title}"
+
         card = {
             "config": {"wide_screen_mode": True},
             "header": {
-                "title": {"tag": "plain_text", "content": f"{symbol_in} → {symbol_out}"},
+                "title": {"tag": "plain_text", "content": header_title},
                 "template": color,
             },
             "elements": [
@@ -156,18 +161,21 @@ class FeishuNotifier:
         balance_virtual: float = 0.0,
         balance_eth: float = 0.0,
         skip_reason: str = "",
+        wallet_label: str = "",
     ) -> None:
         now_cst = datetime.now(CST).strftime("%m-%d %H:%M")
 
         amount_str = f"${amount_display:.2f} {amount_unit}" if amount_unit == "USDC" else f"{amount_display:.4f} {amount_unit}"
 
+        label_prefix = f"{wallet_label} | " if wallet_label else ""
+
         if side == "buy":
             color = "green"
-            title = f"⚡ {symbol_in} → {symbol_out}"
+            title = f"⚡ {label_prefix}{symbol_in} → {symbol_out}"
         else:
             color = "red" if (pnl_usd or 0) < 0 else "orange"
             sign = "+" if (pnl_usd or 0) >= 0 else ""
-            title = f"📉 {symbol_in} → {symbol_out}" + (f"  {sign}${pnl_usd:.0f}" if pnl_usd is not None else "")
+            title = f"📉 {label_prefix}{symbol_in} → {symbol_out}" + (f"  {sign}${pnl_usd:.0f}" if pnl_usd is not None else "")
 
         mode_tag = "🔵 DRY-RUN" if dry_run else "🟢 LIVE"
 

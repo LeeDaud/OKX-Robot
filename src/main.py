@@ -253,6 +253,14 @@ async def run(dry_run_override: bool | None = None) -> None:
             trade_retry=cfg.trade_retry,
         )
 
+    addr_to_remark = {t.address: t.remark for t in cfg.copy_targets}
+
+    def _wallet_label(from_addr: str) -> str:
+        remark = addr_to_remark.get(from_addr)
+        if remark:
+            return remark
+        return f"...{from_addr[-4:]}"
+
     async with OKXDexClient(cfg.okx_api_key, cfg.okx_secret_key, cfg.okx_passphrase) as okx:
         traders = {t.address: _make_trader(okx, t) for t in cfg.copy_targets}
 
@@ -365,6 +373,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                             side="sell", roi_pct=roi_display, pnl_usd=pnl_display,
                             balance_eth=0,
                             skip_reason="",
+                            wallet_label=_wallet_label(swap.from_addr),
                             **balance_kw,
                         )
                         logger.info("Buyback sell sent: %s | token=%s", sell_tx, buyback_target[:10])
@@ -379,6 +388,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                             0, base_symbol, None, cfg.dry_run,
                             side="sell", balance_eth=0,
                             skip_reason=reason,
+                            wallet_label=_wallet_label(swap.from_addr),
                             **balance_kw,
                         )
                     return  # skip normal flow
@@ -507,6 +517,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                     swap.token_in, swap.token_out,
                     amount_display, amount_unit, side,
                     auto_followed=bool(our_tx) or cfg.dry_run,
+                    wallet_label=_wallet_label(swap.from_addr),
                 )
 
                 # 如果有自动跟单结果，再发跟单详情
@@ -536,6 +547,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                         side=side, roi_pct=roi_pct, pnl_usd=pnl_usd,
                         balance_eth=balance_eth,
                         skip_reason=skip_reason,
+                        wallet_label=_wallet_label(swap.from_addr),
                         **balance_kw,
                     )
 
@@ -554,6 +566,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                     swap.token_in, swap.token_out,
                     swap.amount_in / 1e18, "TOKEN", None, cfg.dry_run,
                     side="?", balance_eth=0,
+                    wallet_label=_wallet_label(swap.from_addr),
                     **({"balance_virtual": 0} if cfg.base_token == "VIRTUAL" else {"balance_usdc": 0}),
                 )
 

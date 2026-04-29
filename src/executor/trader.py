@@ -379,13 +379,19 @@ class Trader:
             logger.warning("[FILL] %s no Transfer events for %s to wallet", tx_hash[:10], target_token[:10])
         return filled
 
-    async def _wait_for_receipt(self, tx_hash: str, max_wait: int = 30) -> Optional[dict]:
-        """轮询等待交易收据，最多 max_wait 秒。"""
+    async def _wait_for_receipt(self, tx_hash: str, max_wait: int = 15) -> Optional[dict]:
+        """轮询等待交易收据，最多 max_wait 秒。
+        TransactionNotFound 视为终态，立即返回 None 避免无谓等待。
+        """
+        from web3.exceptions import TransactionNotFound
         for _ in range(max_wait * 2):
             try:
                 receipt = await self._w3.eth.get_transaction_receipt(tx_hash)
                 if receipt is not None:
                     return dict(receipt)
+            except TransactionNotFound:
+                logger.warning("[FILL] Tx %s not found on chain, giving up", tx_hash[:10])
+                return None
             except Exception:
                 pass
             await asyncio.sleep(0.5)
@@ -479,8 +485,36 @@ class Trader:
         tx["chainId"] = 8453
 
         signed = Account.sign_transaction(tx, self._pk)
-        tx_hash = await self._w3.eth.send_raw_transaction(signed.raw_transaction)
+        raw = signed.raw_transaction
+        tx_hash = await self._w3.eth.send_raw_transaction(raw)
         tx_hash_hex = tx_hash.hex()
+
+        # 验证交易是否真正传播到链上
+        # drpc.live 等负载均衡 RPC 可能返回哈希但未广播
+        await asyncio.sleep(1.5)
+        try:
+            post_nonce = await self._w3.eth.get_transaction_count(
+                checksum_wallet, block_identifier="pending"
+            )
+            if post_nonce <= nonce:
+                logger.warning(
+                    "[RETRY] Tx %s: nonce %d not consumed (count=%d), trying fallback broadcast",
+                    tx_hash_hex[:12], nonce, post_nonce,
+                )
+                # 尝试通过主 RPC 再次广播（可能路由到不同节点）
+                await asyncio.sleep(1)
+                tx_hash = await self._w3.eth.send_raw_transaction(raw)
+                tx_hash_hex = tx_hash.hex()
+                await asyncio.sleep(2)
+                post_nonce = await self._w3.eth.get_transaction_count(
+                    checksum_wallet, block_identifier="pending"
+                )
+                if post_nonce <= nonce:
+                    logger.warning("[FAIL] Tx %s: still not propagated after retry", tx_hash_hex[:12])
+                else:
+                    logger.info("[OK] Tx %s: nonce %d consumed on retry", tx_hash_hex[:12], nonce)
+        except Exception as e:
+            logger.warning("[PROPAGATE] Nonce check failed, continuing anyway: %s", e)
 
         # 发交易后立即持久化 tx_hash（借鉴 aidog-auto-buy-bot 的 pendingTx 机制）
         if source_tx:

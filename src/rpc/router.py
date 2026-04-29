@@ -4,6 +4,7 @@ import logging
 import time
 
 from web3 import AsyncWeb3
+from web3.exceptions import TransactionNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,9 @@ _TIMEOUT = 5.0  # seconds before switching to fallback
 # Rate-limit backoff: consecutive failures double the wait, capped at 30s
 _INITIAL_BACKOFF = 0.5
 _MAX_BACKOFF = 30.0
+
+# Errors that should NOT trigger backoff (final / non-retriable)
+_NON_RETRIABLE_ERRORS = (TransactionNotFound,)
 
 
 class _EthProxy:
@@ -84,8 +88,19 @@ class RPCRouter:
         self.eth = _EthProxy(self)
         self._consecutive_failures = 0
 
+    def _is_non_retriable(self, exc: Exception) -> bool:
+        """检查异常是否为终态错误（不重试、不触发退避）。"""
+        for err_type in _NON_RETRIABLE_ERRORS:
+            if isinstance(exc, err_type):
+                return True
+        # web3.py v6+ 的 TransactionNotFound 可能以字符串形式抛出
+        msg = str(exc)
+        if "TransactionNotFound" in msg or "not found" in msg.lower():
+            return True
+        return False
+
     async def _call(self, method: str, *args, **kwargs):
-        # Apply backoff if we've been hitting rate limits
+        # Apply backoff if we've been hitting rate limits (skip for non-retriable)
         if self._consecutive_failures > 0:
             wait = min(_INITIAL_BACKOFF * (2 ** (self._consecutive_failures - 1)), _MAX_BACKOFF)
             logger.info("RPC backoff: waiting %.1fs (failure #%d)", wait, self._consecutive_failures)
@@ -110,7 +125,10 @@ class RPCRouter:
             )
 
             if self._fallback is None:
-                self._consecutive_failures += 1
+                if self._is_non_retriable(e):
+                    self._consecutive_failures = 0  # don't penalize for non-retriable
+                else:
+                    self._consecutive_failures += 1
                 raise
 
         # Small pause before hitting fallback (avoid hammering both endpoints)
@@ -125,7 +143,10 @@ class RPCRouter:
             self._consecutive_failures = 0
             return result
         except Exception as e:
-            self._consecutive_failures += 1
+            if self._is_non_retriable(e):
+                self._consecutive_failures = 0
+            else:
+                self._consecutive_failures += 1
             logger.warning(
                 "RPC fallback also failed (%s: %s), consecutive_failures=%d",
                 type(e).__name__, e, self._consecutive_failures,

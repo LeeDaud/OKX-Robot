@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime, timezone
 
 from web3 import AsyncWeb3
+from web3.exceptions import TransactionNotFound
 
 from src.config.loader import load_config, reload_yaml, TargetConfig, Config
 from src.db.database import (
@@ -216,6 +217,9 @@ async def run(dry_run_override: bool | None = None) -> None:
                 else:
                     await confirm_tx(pt["source_tx"], "failed", "0", 0)
                     logger.warning("[RECOVER] %s: 交易链上失败", tx_hash[:12])
+            except TransactionNotFound:
+                logger.warning("[RECOVER] %s: 交易未上链（不存在），标记为失败", tx_hash[:12])
+                await confirm_tx(pt["source_tx"], "failed", "0", 0)
             except Exception as e:
                 logger.warning("[RECOVER] %s: 恢复失败: %s", tx_hash[:12], e)
 

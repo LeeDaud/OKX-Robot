@@ -171,7 +171,7 @@ def _parse_yaml(y: dict) -> dict:
         feishu_webhook_url=y.get("feishu_webhook_url", ""),
         daily_report_hour_utc=int(y.get("daily_report_hour_utc", 16)),
         dry_run=bool(y.get("dry_run", True)),
-        poll_interval_sec=float(y.get("poll_interval_sec", 2)),
+        poll_interval_sec=float(y.get("poll_interval_sec", 10)),
         trade_retry=int(y.get("trade_retry", 0)),
     )
 

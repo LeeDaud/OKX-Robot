@@ -9,6 +9,10 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT = 5.0  # seconds before switching to fallback
 
+# Rate-limit backoff: consecutive failures double the wait, capped at 30s
+_INITIAL_BACKOFF = 0.5
+_MAX_BACKOFF = 30.0
+
 
 class _EthProxy:
     def __init__(self, router: "RPCRouter") -> None:
@@ -65,7 +69,11 @@ class RPCRouter:
     """
     Wraps two AsyncWeb3 instances. All w3.eth.* async calls try primary first;
     on exception or timeout > _TIMEOUT seconds, retries on fallback.
+
+    Rate-limit aware: consecutive failures apply exponential backoff.
     """
+
+    _consecutive_failures = 0  # class-level default so __new__-based tests work
 
     def __init__(self, primary_url: str, fallback_url: str = "") -> None:
         self._primary = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(primary_url))
@@ -74,29 +82,55 @@ class RPCRouter:
             if fallback_url else None
         )
         self.eth = _EthProxy(self)
+        self._consecutive_failures = 0
 
     async def _call(self, method: str, *args, **kwargs):
+        # Apply backoff if we've been hitting rate limits
+        if self._consecutive_failures > 0:
+            wait = min(_INITIAL_BACKOFF * (2 ** (self._consecutive_failures - 1)), _MAX_BACKOFF)
+            logger.info("RPC backoff: waiting %.1fs (failure #%d)", wait, self._consecutive_failures)
+            await asyncio.sleep(wait)
+
         start = time.monotonic()
         try:
             attr = getattr(self._primary.eth, method)
-            # Handle async properties that return coroutines directly
             if asyncio.iscoroutine(attr):
-                return await asyncio.wait_for(attr, timeout=_TIMEOUT)
-            return await asyncio.wait_for(
-                attr(*args, **kwargs), timeout=_TIMEOUT,
-            )
+                result = await asyncio.wait_for(attr, timeout=_TIMEOUT)
+            else:
+                result = await asyncio.wait_for(
+                    attr(*args, **kwargs), timeout=_TIMEOUT,
+                )
+            self._consecutive_failures = 0
+            return result
         except Exception as e:
             elapsed = time.monotonic() - start
-            if self._fallback is None:
-                raise
             logger.warning(
                 "RPC primary failed (%.2fs, %s: %s), switching to fallback",
                 elapsed, type(e).__name__, e,
             )
+
+            if self._fallback is None:
+                self._consecutive_failures += 1
+                raise
+
+        # Small pause before hitting fallback (avoid hammering both endpoints)
+        await asyncio.sleep(_INITIAL_BACKOFF)
+
+        try:
             attr = getattr(self._fallback.eth, method)
             if asyncio.iscoroutine(attr):
-                return await attr
-            return await attr(*args, **kwargs)
+                result = await attr
+            else:
+                result = await attr(*args, **kwargs)
+            self._consecutive_failures = 0
+            return result
+        except Exception as e:
+            self._consecutive_failures += 1
+            logger.warning(
+                "RPC fallback also failed (%s: %s), consecutive_failures=%d",
+                type(e).__name__, e, self._consecutive_failures,
+            )
+            raise
 
     def __getattr__(self, name: str):
         return getattr(self._primary, name)

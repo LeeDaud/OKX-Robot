@@ -8,6 +8,7 @@
 import asyncio
 import argparse
 import logging
+import time
 from pathlib import Path
 import signal
 import sys
@@ -251,6 +252,25 @@ async def run(dry_run_override: bool | None = None) -> None:
     async with OKXDexClient(cfg.okx_api_key, cfg.okx_secret_key, cfg.okx_passphrase) as okx:
         traders = {t.address: _make_trader(okx, t) for t in cfg.copy_targets}
 
+        # 交易去重：相同代币的买卖 5 分钟内只跟单一次
+        _dedup_window = 300.0
+        _dedup_records: dict[str, float] = {}
+
+        def _is_dedup(side: str, swap: SwapInfo) -> bool:
+            target = swap.token_out if side == "buy" else swap.token_in
+            key = f"{side}:{target}"
+            now = time.time()
+            last = _dedup_records.get(key)
+            if last is not None and (now - last) < _dedup_window:
+                return True
+            _dedup_records[key] = now
+            # 清理过期记录
+            if len(_dedup_records) > 100:
+                expired = [k for k, v in _dedup_records.items() if now - v >= _dedup_window]
+                for k in expired:
+                    del _dedup_records[k]
+            return False
+
         async def on_swap(swap: SwapInfo) -> None:
             try:
                 if not guard.can_trade():
@@ -267,6 +287,12 @@ async def run(dry_run_override: bool | None = None) -> None:
                 skip_reason = ""
                 our_tx = None
                 our_amount_usd = 0.0
+
+                # 交易去重：短时内相同代币的买卖只执行一次
+                if _is_dedup(side, swap):
+                    logger.info("[SKIP DEDUP] %s %s -> %s tx=%s",
+                                side, swap.token_in[:10], swap.token_out[:10], swap.tx_hash[:10])
+                    return
 
                 # ── 回购检测：回购地址买入指定代币 → 立即卖出对应持仓 ──
                 buyback_target = cfg.buyback_watch.get(swap.from_addr.lower())

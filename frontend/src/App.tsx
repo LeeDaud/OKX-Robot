@@ -1,17 +1,20 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
+import { lazy, Suspense } from "react";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Shell from "@/components/Shell";
 import Dashboard from "@/pages/Dashboard";
-import Wallets from "@/pages/Wallets";
-import Params from "@/pages/Params";
-import WalletPage from "@/pages/Wallet";
-import Trades from "@/pages/Trades";
-import Positions from "@/pages/Positions";
-import Grid from "@/pages/Grid";
-import AeroTrend from "@/pages/AeroTrend";
+import { LoadingState } from "@/components/app-primitives";
+
+const Wallets = lazy(() => import("@/pages/Wallets"));
+const Params = lazy(() => import("@/pages/Params"));
+const WalletPage = lazy(() => import("@/pages/Wallet"));
+const Trades = lazy(() => import("@/pages/Trades"));
+const Positions = lazy(() => import("@/pages/Positions"));
+const Grid = lazy(() => import("@/pages/Grid"));
+const AeroTrend = lazy(() => import("@/pages/AeroTrend"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,19 +36,19 @@ export default function App() {
           <Routes>
             <Route element={<Shell />}>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/wallets" element={<Wallets />} />
-              <Route path="/params" element={<Params />} />
-              <Route path="/wallet" element={<WalletPage />} />
-              <Route path="/grid" element={<Grid />} />
-              <Route path="/aero" element={<AeroTrend />} />
-              <Route path="/positions" element={<Positions />} />
-              <Route path="/positions/copy" element={<Positions strategy="copy" />} />
-              <Route path="/positions/grid" element={<Positions strategy="grid" />} />
-              <Route path="/positions/aero" element={<Positions strategy="aero_trend" />} />
-              <Route path="/trades" element={<Trades />} />
-              <Route path="/trades/copy" element={<Trades strategy="copy" />} />
-              <Route path="/trades/grid" element={<Trades strategy="grid" />} />
-              <Route path="/trades/aero" element={<Trades strategy="aero_trend" />} />
+              <Route path="/wallets" element={<Suspense fallback={<LoadingState label="加载中..." />}><Wallets /></Suspense>} />
+              <Route path="/params" element={<Suspense fallback={<LoadingState label="加载中..." />}><Params /></Suspense>} />
+              <Route path="/wallet" element={<Suspense fallback={<LoadingState label="加载中..." />}><WalletPage /></Suspense>} />
+              <Route path="/grid" element={<Suspense fallback={<LoadingState label="加载中..." />}><Grid /></Suspense>} />
+              <Route path="/aero" element={<Suspense fallback={<LoadingState label="加载中..." />}><AeroTrend /></Suspense>} />
+              <Route path="/positions" element={<Suspense fallback={<LoadingState label="加载中..." />}><Positions /></Suspense>} />
+              <Route path="/positions/copy" element={<Suspense fallback={<LoadingState label="加载中..." />}><Positions strategy="copy" /></Suspense>} />
+              <Route path="/positions/grid" element={<Suspense fallback={<LoadingState label="加载中..." />}><Positions strategy="grid" /></Suspense>} />
+              <Route path="/positions/aero" element={<Suspense fallback={<LoadingState label="加载中..." />}><Positions strategy="aero_trend" /></Suspense>} />
+              <Route path="/trades" element={<Suspense fallback={<LoadingState label="加载中..." />}><Trades /></Suspense>} />
+              <Route path="/trades/copy" element={<Suspense fallback={<LoadingState label="加载中..." />}><Trades strategy="copy" /></Suspense>} />
+              <Route path="/trades/grid" element={<Suspense fallback={<LoadingState label="加载中..." />}><Trades strategy="grid" /></Suspense>} />
+              <Route path="/trades/aero" element={<Suspense fallback={<LoadingState label="加载中..." />}><Trades strategy="aero_trend" /></Suspense>} />
             </Route>
           </Routes>
         </BrowserRouter>

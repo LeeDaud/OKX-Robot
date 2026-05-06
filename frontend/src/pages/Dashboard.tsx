@@ -1,9 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchConfig, fetchTradeStats, fetchPositions, fetchBalances, fetchGridState } from "@/lib/api";
-import type { AppConfig, TradeStats, BalancesResponse, GridState } from "@/types/api";
+import { Link } from "react-router-dom";
+import { fetchConfig, fetchTradeStats, fetchPositions, fetchBalances, fetchGridState, fetchWallet as fetchWalletApi } from "@/lib/api";
+import type { AppConfig, TradeStats, BalancesResponse, GridState, WalletInfo } from "@/types/api";
 import { PageHeader, MetricCard, SectionCard, LoadingState } from "@/components/app-primitives";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Card, CardContent } from "@/components/ui/card";
+import { Settings2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { shortenAddress } from "@/lib/tokens";
 
 export default function Dashboard() {
   const { data: config, isLoading } = useQuery<AppConfig>({ queryKey: ["config"], queryFn: fetchConfig });
@@ -11,6 +17,7 @@ export default function Dashboard() {
   const { data: positions } = useQuery({ queryKey: ["positions"], queryFn: fetchPositions });
   const { data: balanceData } = useQuery<BalancesResponse>({ queryKey: ["balances"], queryFn: fetchBalances });
   const { data: gridState } = useQuery<GridState>({ queryKey: ["grid-state"], queryFn: fetchGridState });
+  const { data: wallet } = useQuery<WalletInfo>({ queryKey: ["wallet"], queryFn: fetchWalletApi });
 
   if (isLoading) return <LoadingState label="正在加载概览..." />;
 
@@ -22,10 +29,74 @@ export default function Dashboard() {
 
   const gridEnabled = gridState?.enabled ?? false;
   const gridActiveSlots = gridState?.slots?.filter((s) => s.status === "bought").length ?? 0;
+  const copyEnabled = (config?.copy_targets?.length ?? 0) > 0;
+  const isWalletReady = wallet?.has_private_key && wallet?.has_okx_api_key;
 
   return (
     <div className="space-y-8">
-      <PageHeader eyebrow="overview" title="运营概览" description="跟单机器人与策略运行状态总览" />
+      <PageHeader eyebrow="overview" title="运营概览" description="钱包、跟单与策略运行状态总览" />
+
+      {/* ── 钱包状态 ── */}
+      <section>
+        <div className="mb-4 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border/40" />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/60">
+            执行钱包
+          </span>
+          <div className="h-px flex-1 bg-border/40" />
+        </div>
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+              {/* 左侧：地址 + 状态 */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-sm">
+                    {wallet?.wallet_address ? shortenAddress(wallet.wallet_address, 10, 6) : "-"}
+                  </span>
+                  <Badge variant={config?.dry_run ? "warning" : "success"}>
+                    {config?.dry_run ? "Dry Run" : "Live"}
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                  <span>私钥: <strong className={wallet?.has_private_key ? "text-[color:var(--success)]" : "text-[color:var(--danger)]"}>{wallet?.has_private_key ? "已配置" : "未配置"}</strong></span>
+                  <span>OKX API: <strong className={wallet?.has_okx_api_key ? "text-[color:var(--success)]" : "text-[color:var(--danger)]"}>{wallet?.has_okx_api_key ? "已配置" : "未配置"}</strong></span>
+                  <span>基础代币: <strong>{baseToken}</strong></span>
+                </div>
+                <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                  {baseBalance != null && (
+                    <span>{baseToken} 余额: <strong>${baseBalance.toFixed(4)}</strong></span>
+                  )}
+                  {ethBalance != null && (
+                    <span>ETH 余额: <strong>{ethBalance.toFixed(4)}</strong></span>
+                  )}
+                </div>
+              </div>
+              {/* 右侧：状态指示 + 编辑按钮 */}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className={cn("size-2 rounded-full", copyEnabled ? "bg-[color:var(--success)]" : "bg-muted-foreground/40")} />
+                  <span className="text-xs text-muted-foreground">跟单 {copyEnabled ? "运行中" : "未启用"}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={cn("size-2 rounded-full", gridEnabled ? "bg-[color:var(--success)]" : "bg-muted-foreground/40")} />
+                  <span className="text-xs text-muted-foreground">网格 {gridEnabled ? "运行中" : "未启用"}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={cn("size-2 rounded-full", isWalletReady ? "bg-[color:var(--success)]" : "bg-[color:var(--danger)]")} />
+                  <span className="text-xs text-muted-foreground">钱包 {isWalletReady ? "就绪" : "未就绪"}</span>
+                </div>
+                <Button variant="outline" size="sm" asChild>
+                  <Link to="/wallet">
+                    <Settings2 className="size-3.5" />
+                    配置
+                  </Link>
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
 
       {/* ── 跟单状态 ── */}
       <section>

@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Wallet,
   SlidersHorizontal,
-  UserCircle,
   History,
   Package,
   Grid3x3,
@@ -33,7 +32,6 @@ const navGroups = [
     items: [
       { to: "/wallets", label: "跟单钱包", icon: Wallet },
       { to: "/params", label: "跟单参数", icon: SlidersHorizontal },
-      { to: "/wallet", label: "执行钱包", icon: UserCircle },
       { to: "/positions", label: "实时持仓", icon: Package },
     ],
   },

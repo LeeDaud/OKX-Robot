@@ -681,19 +681,27 @@ async def handle_refresh_prices(request: web.Request):
         "WHERE side='buy' AND is_open=1"
     )
 
+    # 按 token 地址聚合多笔持仓
+    agg = {}
+    for row in open_rows:
+        addr = row["token_address"]
+        amount = int(row.get("amount_out") or 0)
+        cost = float(row.get("cost_usd") or 0)
+        if amount <= 0:
+            continue
+        if addr not in agg:
+            agg[addr] = {"amount": 0, "cost": 0.0}
+        agg[addr]["amount"] += amount
+        agg[addr]["cost"] += cost
+
     tokens = {}
     positions = {}
     async with OKXDexClient(
         okx_cfg["api_key"], okx_cfg["secret"], okx_cfg["passphrase"]
     ) as okx:
-        for row in open_rows:
-            addr = row["token_address"]
-            if addr in positions:
-                continue
-            amount = int(row.get("amount_out") or 0)
-            cost = float(row.get("cost_usd") or 0)
-            if amount <= 0:
-                continue
+        for addr, data in agg.items():
+            amount = data["amount"]
+            cost = data["cost"]
 
             quote = await okx.get_quote(addr, USDC_BASE, amount)
             current_price = None

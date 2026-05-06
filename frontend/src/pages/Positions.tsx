@@ -191,7 +191,7 @@ export default function Positions({ strategy }: { strategy?: StrategyFilter }) {
             </TableHeader>
             <TableBody>
               {open.map((p) => {
-                const pd = priceData?.[String(p.id)];
+                const pd = p.token_out ? priceData?.[p.token_out.toLowerCase()] : undefined;
                 const ti = p.token_out ? tokenInfo?.[p.token_out.toLowerCase()] : undefined;
                 return (
                   <TableRow key={p.id}>
@@ -200,7 +200,7 @@ export default function Positions({ strategy }: { strategy?: StrategyFilter }) {
                       {ti?.symbol || tokenDisplayName(p.token_out || "")}
                     </TableCell>
                     <TableCell><CopyAddress address={p.source_addr || ""} /></TableCell>
-                    <TableCell><AmountCell value={pd?.amount ?? p.amount_out} /></TableCell>
+                    <TableCell><AmountCell value={p.amount_out ?? pd?.amount} /></TableCell>
                     <TableCell className="font-mono text-xs">${p.entry_price?.toFixed(6) ?? "-"}</TableCell>
                     <TableCell><DollarCell value={p.filled_cost_usd} /></TableCell>
                     <TableCell className="font-mono text-xs">

@@ -29,6 +29,10 @@ from src.strategy.grid import GridStrategy
 from src.strategy.unicorn_sniper import UnicornSniper
 from src.strategy.whale_exit_guard import WhaleExitGuard
 from src.strategy.virtuals_client import VirtualsClubClient
+from src.strategy.aero_collector import AeroMarketCollector
+from src.strategy.aero_strategy import TrendStrategy
+from src.strategy.aero_position import PositionManager
+
 from src.risk.guard import DailyLossGuard
 from src.risk.take_profit import TakeProfitMonitor
 from src.rpc.router import RPCRouter
@@ -521,6 +525,158 @@ async def run(dry_run_override: bool | None = None) -> None:
                     logger.error("[SNIPER] tick 异常: %s", e)
                 await asyncio.sleep(cfg.sniper.poll_interval_sec)
 
+        # ── AERO 趋势交易 ───────────────────────────────────────────
+
+        aero_strategy_ok = False
+        aero_trader_ref = None
+        if cfg.aero_trend.enabled:
+            try:
+                aero_collector = AeroMarketCollector(w3=w3, okx=okx)
+                aero_strategy = TrendStrategy(cfg.aero_trend)
+                aero_pos_mgr = PositionManager(
+                    state_mgr=state_mgr,
+                    strategy_state=strategy_state,
+                    guard=guard,
+                )
+                aero_pos_mgr.load()
+                aero_trader_ref = trader
+                aero_strategy_ok = True
+                logger.info("[AERO] 趋势策略已初始化: 轮询 %.0fs",
+                            cfg.aero_trend.poll_interval_sec)
+            except Exception as e:
+                logger.error("[AERO] 初始化失败: %s", e)
+        else:
+            logger.info("[AERO] 未启用，跳过")
+
+        async def aero_loop(stop: asyncio.Event):
+            if not aero_strategy_ok:
+                return
+            while not stop.is_set():
+                try:
+                    snap = await aero_collector.collect()
+                    if snap is None:
+                        await asyncio.sleep(cfg.aero_trend.poll_interval_sec)
+                        continue
+
+                    aero_pos_mgr.position.update_price(snap.price)
+                    can, reason = aero_pos_mgr.can_trade()
+
+                    if aero_pos_mgr.position.has_position:
+                        sell_dec = aero_strategy.evaluate_exit(snap, aero_pos_mgr.position)
+                        if sell_dec:
+                            pct = sell_dec.pct_to_sell
+                            is_full = pct >= 1.0
+                            aero_raw = aero_pos_mgr.position.filled_amount
+                            sell_raw = int(aero_raw * pct) if aero_raw > 0 else max(int(aero_pos_mgr.position.position_amount * 1e18 * pct), 0)
+
+                            if sell_raw <= 0:
+                                logger.warning("[AERO] 卖出数量为 0，跳过")
+                                await asyncio.sleep(cfg.aero_trend.poll_interval_sec)
+                                continue
+
+                            tx_hash = None
+                            if aero_trader_ref:
+                                tx_hash = await aero_trader_ref.sell(
+                                    cfg.aero_trend.aero_address,
+                                    amount=sell_raw,
+                                    source_tx=f"aero_{datetime.now(timezone.utc).timestamp()}",
+                                )
+
+                            pnl_pct = aero_pos_mgr.position.pnl_pct
+                            logger.info("[AERO] %s: %s pnl=%.2f%% tx=%s",
+                                        sell_dec.reason, "DRY-RUN" if cfg.dry_run else "LIVE",
+                                        pnl_pct * 100, (tx_hash or "none")[:12])
+
+                            if is_full:
+                                aero_pos_mgr.close_position(pnl_pct)
+                            else:
+                                aero_pos_mgr.partial_close(pnl_pct, pct)
+
+                            await notifier.notify_alert(
+                                f"[AERO] {sell_dec.reason}: pnl={pnl_pct*100:.1f}% "
+                                f"{'(dry-run)' if cfg.dry_run else f'tx={tx_hash[:12]}'}"
+                            )
+
+                            if pnl_pct < 0:
+                                aero_pos_mgr.set_cooldown()
+                            if aero_pos_mgr.consecutive_losses >= 5 or (
+                                pnl_pct < 0
+                                and abs(pnl_pct * aero_pos_mgr.position.cost_basis_usdc) >= cfg.daily_loss_limit_usd
+                            ):
+                                aero_pos_mgr.halt_today()
+                                await notifier.notify_alert("[AERO] 当日已停止交易: 亏损超限")
+
+                            continue
+
+                    if can:
+                        buy_dec = aero_strategy.evaluate_entry(snap, aero_pos_mgr.position)
+                        if buy_dec:
+                            usdc_balance = await _get_usdc_balance(w3, cfg.wallet_address)
+                            buy_amount = aero_pos_mgr.get_position_size(usdc_balance)
+                            buy_raw = int(buy_amount * 1e6)
+                            if buy_raw <= 0:
+                                logger.warning("[AERO] 买入金额为 0 (balance=%.2f)", usdc_balance)
+                                await asyncio.sleep(cfg.aero_trend.poll_interval_sec)
+                                continue
+
+                            tx_hash, filled_raw = None, 0
+                            if aero_trader_ref:
+                                tx_hash, filled_raw = await aero_trader_ref.buy(
+                                    cfg.aero_trend.aero_address,
+                                    buy_raw,
+                                    payment_token=USDC_BASE,
+                                    payment_decimals=6,
+                                    source_tx=f"aero_{datetime.now(timezone.utc).timestamp()}",
+                                )
+
+                            if tx_hash and filled_raw > 0:
+                                aero_price = buy_amount / (filled_raw / 1e18)
+                                aero_pos_mgr.open_position(
+                                    price=aero_price,
+                                    amount_aero=filled_raw / 1e18,
+                                    cost_usdc=buy_amount,
+                                    filled_raw=filled_raw,
+                                    tx_hash=tx_hash,
+                                )
+                                logger.info("[AERO] 买入成功: %.4f AERO @ %.6f USDC tx=%s",
+                                            filled_raw / 1e18, aero_price, tx_hash[:12])
+                                await notifier.notify_alert(
+                                    f"[AERO] 买入 {buy_dec.reason}: "
+                                    f"{buy_amount:.2f} USDC -> {filled_raw/1e18:.2f} AERO "
+                                    f"{'(dry-run)' if cfg.dry_run else f'tx={tx_hash[:12]}'}"
+                                )
+                                try:
+                                    await insert_buy(tx_hash, cfg.aero_trend.aero_address,
+                                                     buy_raw, filled_raw,
+                                                     strategy="aero_trend",
+                                                     cost_usd=buy_amount,
+                                                     filled_amount=str(filled_raw))
+                                except Exception as e:
+                                    logger.warning("[AERO] DB 记录失败: %s", e)
+                            elif cfg.dry_run:
+                                aero_pos_mgr.open_position(
+                                    price=buy_amount,
+                                    amount_aero=1.0,
+                                    cost_usdc=buy_amount,
+                                    filled_raw=0,
+                                    tx_hash=f"dry_run_{datetime.now(timezone.utc).timestamp()}",
+                                )
+                                logger.info("[AERO] DRY-RUN 买入: %.2f USDC (纸面)", buy_amount)
+
+                    logger.info(
+                        "[AERO] snap: price=%.6f ret_5m=%.2f%% vol_ratio=%.1f buy_press=%.0f%% "
+                        "liq=%.0fK pos=%s pnl=%.1f%%",
+                        snap.price, snap.return_5m * 100, snap.volume_ratio,
+                        snap.buy_pressure * 100, snap.pool_liquidity_usd / 1000,
+                        "有" if aero_pos_mgr.position.has_position else "无",
+                        aero_pos_mgr.position.pnl_pct * 100,
+                    )
+
+                except Exception as e:
+                    logger.error("[AERO] 循环异常: %s", e, exc_info=True)
+
+                await asyncio.sleep(cfg.aero_trend.poll_interval_sec)
+
         # 启动
         stop_event = asyncio.Event()
         def _shutdown(*_):
@@ -538,6 +694,7 @@ async def run(dry_run_override: bool | None = None) -> None:
             asyncio.create_task(hourly_reporter(stop_event)),
             asyncio.create_task(grid_loop(stop_event)),
             asyncio.create_task(sniper_loop(stop_event)),
+            asyncio.create_task(aero_loop(stop_event)),
         ]
 
         await stop_event.wait()

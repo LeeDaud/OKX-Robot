@@ -857,6 +857,30 @@ def _row_to_trade(row: dict) -> dict:
     }
 
 
+async def handle_aero_state(_request):
+    """GET /api/aero/state - AERO 趋势策略状态"""
+    state = _read_state()
+    raw_pos = state.get("aero_position", {})
+    consecutive = int(state.get("aero_consecutive_losses", 0))
+
+    return json_ok({
+        "has_position": raw_pos.get("has_position", False),
+        "entry_price": raw_pos.get("entry_price", 0),
+        "current_price": raw_pos.get("current_price", 0),
+        "position_amount": raw_pos.get("position_amount", 0),
+        "cost_basis_usdc": raw_pos.get("cost_basis_usdc", 0),
+        "pnl_pct": raw_pos.get("pnl_pct", 0),
+        "highest_price": raw_pos.get("highest_price_since_entry", 0),
+        "holding_time_minutes": raw_pos.get("holding_time_minutes", 0),
+        "take_profit_1_done": raw_pos.get("take_profit_1_done", False),
+        "take_profit_2_done": raw_pos.get("take_profit_2_done", False),
+        "trailing_stop_active": raw_pos.get("trailing_stop_active", False),
+        "consecutive_losses": consecutive,
+        "entry_time": raw_pos.get("entry_time", ""),
+        "buy_tx_hash": raw_pos.get("buy_tx_hash", ""),
+    })
+
+
 def create_app() -> web.Application:
     app = web.Application()
 
@@ -882,6 +906,9 @@ def create_app() -> web.Application:
     app.router.add_put("/api/config/params", handle_update_params)
     app.router.add_get("/api/positions/all", handle_positions_all)
     app.router.add_post("/api/positions/refresh-prices", handle_refresh_prices)
+
+    # AERO 趋势策略
+    app.router.add_get("/api/aero/state", handle_aero_state)
 
     # CORS preflight
     app.router.add_route("OPTIONS", "/api/{tail:.*}", _cors_preflight)

@@ -26,6 +26,14 @@ grid:
   investment_usdc: 8     # 总投入（均分到每个位）
   profit_pct: 3.0        # 每个位的目标利润率
 
+# AERO 趋势交易策略
+aero_trend:
+  enabled: false
+  pool_address: "0xcddac48af89589052ff14a3cacf58596fe7e2be2"
+  poll_interval_sec: 60
+  position_size_pct: 0.05
+  # 其余使用默认值
+
 # Unicorn 打新狙击策略
 sniper:
   enabled: false

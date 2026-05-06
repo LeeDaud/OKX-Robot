@@ -44,6 +44,45 @@ class GridConfig:
 
 
 @dataclass
+class AeroTrendConfig:
+    enabled: bool = False
+    pool_address: str = "0xcddac48af89589052ff14a3cacf58596fe7e2be2"
+    aero_address: str = "0x940181a94a35a4569e4529a3cdfb74e38fd98631"
+    usdc_address: str = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+    # 买入条件
+    min_return_5m: float = 0.02
+    max_return_5m: float = 0.08
+    min_return_15m: float = 0.04
+    max_return_30m: float = 0.40
+    min_volume_ratio: float = 3.0
+    min_buy_pressure: float = 0.65
+    min_liquidity_usd: float = 200000
+    max_slippage_buy: float = 0.01
+    # 卖出条件
+    stop_loss_pct: float = 0.07
+    time_stop_minutes: int = 60
+    time_stop_min_profit: float = 0.03
+    take_profit_1_pct: float = 0.10
+    take_profit_1_ratio: float = 0.30
+    take_profit_2_pct: float = 0.20
+    take_profit_2_ratio: float = 0.30
+    trailing_stop_drawdown: float = 0.08
+    # 仓位
+    position_size_pct: float = 0.05
+    position_size_reduced: float = 0.025
+    consecutive_loss_limit: int = 5
+    daily_profit_cap: float = 0.08
+    daily_loss_limit_pct: float = 0.03
+    cooldown_minutes: int = 30
+    poll_interval_sec: float = 60
+    # 强回踩
+    pullback_min: float = 0.05
+    pullback_max: float = 0.15
+    pullback_volume_ratio: float = 2.0
+    pullback_buy_pressure: float = 0.60
+
+
+@dataclass
 class SniperConfig:
     enabled: bool = False
     virtuals_club_url: str = "https://virtuals.club"
@@ -73,6 +112,7 @@ class Config:
     dca: DcaConfig = field(default_factory=DcaConfig)
     deep_buy: DeepBuyConfig = field(default_factory=DeepBuyConfig)
     grid: GridConfig = field(default_factory=GridConfig)
+    aero_trend: AeroTrendConfig = field(default_factory=AeroTrendConfig)
     sniper: SniperConfig = field(default_factory=SniperConfig)
     buyback_watch: dict[str, str] = field(default_factory=dict)
     base_token: str = "VIRTUAL"
@@ -149,16 +189,56 @@ def _parse_sniper(raw: dict | None) -> SniperConfig:
     )
 
 
+def _parse_aero(raw: dict | None) -> AeroTrendConfig:
+    if not raw:
+        return AeroTrendConfig(enabled=False)
+    return AeroTrendConfig(
+        enabled=bool(raw.get("enabled", True)),
+        pool_address=str(raw.get("pool_address", "")).lower(),
+        aero_address=str(raw.get("aero_address", "")).lower(),
+        usdc_address=str(raw.get("usdc_address", "")).lower(),
+        min_return_5m=float(raw.get("min_return_5m", 0.02)),
+        max_return_5m=float(raw.get("max_return_5m", 0.08)),
+        min_return_15m=float(raw.get("min_return_15m", 0.04)),
+        max_return_30m=float(raw.get("max_return_30m", 0.40)),
+        min_volume_ratio=float(raw.get("min_volume_ratio", 3.0)),
+        min_buy_pressure=float(raw.get("min_buy_pressure", 0.65)),
+        min_liquidity_usd=float(raw.get("min_liquidity_usd", 200000)),
+        max_slippage_buy=float(raw.get("max_slippage_buy", 0.01)),
+        stop_loss_pct=float(raw.get("stop_loss_pct", 0.07)),
+        time_stop_minutes=int(raw.get("time_stop_minutes", 60)),
+        time_stop_min_profit=float(raw.get("time_stop_min_profit", 0.03)),
+        take_profit_1_pct=float(raw.get("take_profit_1_pct", 0.10)),
+        take_profit_1_ratio=float(raw.get("take_profit_1_ratio", 0.30)),
+        take_profit_2_pct=float(raw.get("take_profit_2_pct", 0.20)),
+        take_profit_2_ratio=float(raw.get("take_profit_2_ratio", 0.30)),
+        trailing_stop_drawdown=float(raw.get("trailing_stop_drawdown", 0.08)),
+        position_size_pct=float(raw.get("position_size_pct", 0.05)),
+        position_size_reduced=float(raw.get("position_size_reduced", 0.025)),
+        consecutive_loss_limit=int(raw.get("consecutive_loss_limit", 5)),
+        daily_profit_cap=float(raw.get("daily_profit_cap", 0.08)),
+        daily_loss_limit_pct=float(raw.get("daily_loss_limit_pct", 0.03)),
+        cooldown_minutes=int(raw.get("cooldown_minutes", 30)),
+        poll_interval_sec=float(raw.get("poll_interval_sec", 60)),
+        pullback_min=float(raw.get("pullback_min", 0.05)),
+        pullback_max=float(raw.get("pullback_max", 0.15)),
+        pullback_volume_ratio=float(raw.get("pullback_volume_ratio", 2.0)),
+        pullback_buy_pressure=float(raw.get("pullback_buy_pressure", 0.60)),
+    )
+
+
 def _parse_yaml(y: dict) -> dict:
     raw_buyback = y.get("buyback_watch", {}) or {}
     dca_raw = y.get("dca")
     deep_buy_raw = y.get("deep_buy")
     grid_raw = y.get("grid")
+    aero_raw = y.get("aero_trend")
     sniper_raw = y.get("sniper")
     return dict(
         dca=_parse_dca(dca_raw),
         deep_buy=_parse_deep_buy(deep_buy_raw),
         grid=_parse_grid(grid_raw),
+        aero_trend=_parse_aero(aero_raw),
         sniper=_parse_sniper(sniper_raw),
         buyback_watch={k.lower(): v.lower() for k, v in raw_buyback.items()},
         base_token=str(y.get("base_token", "VIRTUAL")).upper(),

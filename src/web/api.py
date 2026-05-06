@@ -314,10 +314,11 @@ async def handle_balances(request: web.Request):
     from web3 import AsyncWeb3
     from src.executor.trader import ERC20_BALANCE_ABI
 
+    base_token = _load_full_config().get("base_token", "USDC")
     wallet = os.environ.get("WALLET_ADDRESS", "")
     rpc_url = os.environ.get("RPC_HTTP_URL", "") or os.environ.get("RPC_HTTP_URL_FALLBACK", "")
     if not wallet or not rpc_url:
-        return json_ok({"balances": {}, "base_token": "USDC", "wallet_address": wallet,
+        return json_ok({"balances": {}, "base_token": base_token, "wallet_address": wallet,
                         "error": "WALLET_ADDRESS or RPC_HTTP_URL not configured"})
 
     known_tokens = {
@@ -332,7 +333,7 @@ async def handle_balances(request: web.Request):
         checksum = AsyncWeb3.to_checksum_address(wallet)
     except Exception as e:
         logger.warning("Web3 init failed: %s", e)
-        return json_ok({"balances": {}, "base_token": "USDC", "wallet_address": wallet,
+        return json_ok({"balances": {}, "base_token": base_token, "wallet_address": wallet,
                         "error": f"RPC init failed: {e}"})
 
     result = {}
@@ -355,7 +356,7 @@ async def handle_balances(request: web.Request):
 
     return json_ok({
         "balances": result,
-        "base_token": "USDC",
+        "base_token": base_token,
         "wallet_address": wallet,
     })
 

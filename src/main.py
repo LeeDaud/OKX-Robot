@@ -25,6 +25,7 @@ from src.executor.okx_client import OKXDexClient
 from src.executor.trader import Trader, USDC_BASE
 from src.monitor.buyback import BuybackMonitor, BuybackEvent
 from src.notify.feishu import FeishuNotifier
+from src.strategy.grid import GridStrategy
 from src.risk.guard import DailyLossGuard
 from src.risk.take_profit import TakeProfitMonitor
 from src.rpc.router import RPCRouter
@@ -266,7 +267,9 @@ async def run(dry_run_override: bool | None = None) -> None:
                     await notifier.notify_alert(f"🔄 DCA 定投触发: {dc.amount_usdc} USDC → {dc.address[:10]}")
 
                     tx_hash, filled_raw = await trader.buy(
-                        dc.address, amount, source_tx=f"dca_{time.time_ns()}",
+                        dc.address, amount,
+                        payment_token=USDC_BASE, payment_decimals=6,
+                        source_tx=f"dca_{time.time_ns()}",
                     )
 
                     if tx_hash and filled_raw > 0:
@@ -451,6 +454,32 @@ async def run(dry_run_override: bool | None = None) -> None:
             on_take_profit=on_take_profit,
         )
 
+        # ── Grid 网格交易 ──────────────────────────────────────────
+
+        grid_ok = False
+        grid_strategy = None
+        if cfg.grid.enabled:
+            grid_strategy = GridStrategy(
+                okx=okx, trader=trader, config=cfg.grid,
+                notifier=notifier, guard=guard,
+                state_mgr=state_mgr, dry_run=cfg.dry_run,
+            )
+            grid_ok = await grid_strategy.initialize()
+            if not grid_ok:
+                logger.warning("[GRID] 初始化失败，跳过网格策略")
+        else:
+            logger.info("[GRID] 未启用，跳过")
+
+        async def grid_loop(stop: asyncio.Event):
+            if not grid_ok:
+                return
+            while not stop.is_set():
+                try:
+                    await grid_strategy.tick()
+                except Exception as e:
+                    logger.error("[GRID] tick 异常: %s", e)
+                await asyncio.sleep(cfg.poll_interval_sec)
+
         # 启动
         stop_event = asyncio.Event()
         def _shutdown(*_):
@@ -466,6 +495,7 @@ async def run(dry_run_override: bool | None = None) -> None:
             asyncio.create_task(dca_loop(stop_event)),
             asyncio.create_task(tp_monitor.start()),
             asyncio.create_task(hourly_reporter(stop_event)),
+            asyncio.create_task(grid_loop(stop_event)),
         ]
 
         await stop_event.wait()

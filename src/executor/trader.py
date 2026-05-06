@@ -115,20 +115,26 @@ class Trader:
         self,
         token_address: str,
         amount_in: int,
+        payment_token: str | None = None,
+        payment_decimals: int = 6,
         source_tx: str = "",
     ) -> tuple[Optional[str], int]:
         """
-        买入代币：用 base_token 换取目标代币。
+        买入代币：用 payment_token 换取目标代币。
+        默认用 USDC（6 decimals）支付。
 
         Args:
             token_address: 目标代币地址
-            amount_in: 支付 base_token 数量（raw，如 USDC 6 decimals）
+            amount_in: 支付代币数量（raw）
+            payment_token: 支付代币地址，默认 USDC
+            payment_decimals: 支付代币小数位数，默认 6（USDC）
             source_tx: 触发源交易哈希（用于崩溃恢复追踪）
 
         Returns:
             (tx_hash or None, filled_amount_raw)
         """
         self.last_skip_reason = ""
+        payment_token = payment_token or USDC_BASE
 
         if amount_in <= 0:
             self.last_skip_reason = "买入金额 <= 0"
@@ -138,7 +144,7 @@ class Trader:
             return (None, 0)
 
         quote = await self._okx.get_quote(
-            self.base_address, token_address, amount_in, self._slippage
+            payment_token, token_address, amount_in, self._slippage
         )
         if quote is None:
             self.last_skip_reason = "OKX 无可用买入报价"
@@ -152,18 +158,19 @@ class Trader:
             logger.warning("[SKIP BUY] %s", self.last_skip_reason)
             return (None, 0)
 
-        amount_base = amount_in / (10 ** self.base_decimals)
+        amount_base = amount_in / (10 ** payment_decimals)
         logger.info(
             "[%s] BUY %s with %.4f %s | expected_out=%s",
             "DRY-RUN" if self._dry_run else "LIVE",
-            token_address[:10], amount_base, self._base_token,
+            token_address[:10], amount_base,
+            "USDC" if payment_token == USDC_BASE.lower() or payment_token == USDC_BASE else "TOKEN",
             quote.get("toTokenAmount", "?"),
         )
 
         if self._dry_run:
             return (None, 0)
 
-        tx_hash = await self._send_swap(self.base_address, token_address, amount_in,
+        tx_hash = await self._send_swap(payment_token, token_address, amount_in,
                                          source_tx=source_tx, stage="buy")
         if not tx_hash:
             return (None, 0)

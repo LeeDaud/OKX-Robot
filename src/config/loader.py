@@ -31,6 +31,16 @@ class DcaConfig:
 
 
 @dataclass
+class GridConfig:
+    enabled: bool = False
+    token: str = ""
+    levels: int = 6
+    spread_pct: float = 2.0
+    investment_usdc: float = 60.0
+    profit_pct: float = 3.0
+
+
+@dataclass
 class Config:
     # 必填字段（无默认值，必须在前）
     rpc_http_url: str
@@ -43,6 +53,7 @@ class Config:
     rpc_http_url_fallback: str = ""
     dca: DcaConfig = field(default_factory=DcaConfig)
     deep_buy: DeepBuyConfig = field(default_factory=DeepBuyConfig)
+    grid: GridConfig = field(default_factory=GridConfig)
     buyback_watch: dict[str, str] = field(default_factory=dict)
     base_token: str = "VIRTUAL"
     daily_loss_limit_usd: float = 10
@@ -83,13 +94,28 @@ def _parse_deep_buy(raw: dict | None) -> DeepBuyConfig:
     )
 
 
+def _parse_grid(raw: dict | None) -> GridConfig:
+    if not raw:
+        return GridConfig(enabled=False)
+    return GridConfig(
+        enabled=bool(raw.get("enabled", True)),
+        token=str(raw.get("token", "")).lower(),
+        levels=int(raw.get("levels", 6)),
+        spread_pct=float(raw.get("spread_pct", 2.0)),
+        investment_usdc=float(raw.get("investment_usdc", 60)),
+        profit_pct=float(raw.get("profit_pct", 3.0)),
+    )
+
+
 def _parse_yaml(y: dict) -> dict:
     raw_buyback = y.get("buyback_watch", {}) or {}
     dca_raw = y.get("dca")
     deep_buy_raw = y.get("deep_buy")
+    grid_raw = y.get("grid")
     return dict(
         dca=_parse_dca(dca_raw),
         deep_buy=_parse_deep_buy(deep_buy_raw),
+        grid=_parse_grid(grid_raw),
         buyback_watch={k.lower(): v.lower() for k, v in raw_buyback.items()},
         base_token=str(y.get("base_token", "VIRTUAL")).upper(),
         daily_loss_limit_usd=float(y.get("daily_loss_limit_usd", 10)),

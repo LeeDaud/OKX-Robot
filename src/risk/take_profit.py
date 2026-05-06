@@ -3,28 +3,29 @@
 """
 import asyncio
 import logging
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, Optional
 
-from src.db.database import get_open_positions, close_position, _amount_to_usd
+from src.db.database import get_open_positions
 from src.executor.okx_client import OKXDexClient
-from src.executor.trader import Trader
-from src.monitor.decoder import USDC_BASE
+from src.executor.trader import Trader, USDC_BASE
 
 logger = logging.getLogger(__name__)
 
 
 class TakeProfitMonitor:
+    """监控所有持仓，当 ROI 达到阈值时自动卖出。"""
+
     def __init__(
         self,
         okx: OKXDexClient,
-        traders: dict[str, Trader],
-        take_profit_roi: float,
+        trader: Trader,
+        roi_threshold: float,
         check_interval: float,
         on_take_profit: Callable[[dict, float, float], Awaitable[None]],
     ) -> None:
         self._okx = okx
-        self._traders = traders
-        self._roi_threshold = take_profit_roi
+        self._trader = trader
+        self._roi_threshold = roi_threshold
         self._interval = check_interval
         self._on_take_profit = on_take_profit
         self._running = False
@@ -49,21 +50,21 @@ class TakeProfitMonitor:
             await self._evaluate(pos)
 
     async def _evaluate(self, pos: dict) -> None:
-        token = pos["token_out"]
+        token = pos["token_address"]
 
-        # 优先使用机器人实际成交数据，旧记录 fallback 到目标报价估算
+        # 优先使用实际成交数量
         filled_raw = pos.get("filled_amount")
         if filled_raw:
             amount_out = int(filled_raw)
-            cost_usd = pos.get("filled_cost_usd", 0.0)
+            cost_usd = pos.get("cost_usd", 0.0)
         else:
-            amount_out = pos.get("amount_out", 0)
-            cost_usd = _amount_to_usd(pos.get("amount_in", 0), pos.get("token_in", USDC_BASE))
+            amount_out = int(pos.get("amount_out", 0))
+            cost_usd = pos.get("cost_usd", 0.0)
 
         if not token or amount_out <= 0 or cost_usd <= 0:
             return
 
-        # 查当前价值：用 amount_out 个 token 能换多少 USDC
+        # 查当前价值
         quote = await self._okx.get_quote(token, USDC_BASE, int(amount_out))
         if quote is None:
             return
@@ -73,30 +74,16 @@ class TakeProfitMonitor:
             return
 
         roi = (current_usd - cost_usd) / cost_usd
-
         if roi < self._roi_threshold:
             return
 
         logger.info("Take profit triggered: %s roi=%.2f%%", token[:10], roi * 100)
 
-        # 找对应的 trader（用 source_addr 匹配）
-        trader = self._traders.get(pos["source_addr"])
-        if trader is None:
-            logger.warning("No trader for source_addr=%s, skipping take profit", pos.get("source_addr"))
-            return
-
-        tx = await trader.sell(token, USDC_BASE, int(amount_out), source_tx=pos.get("source_tx", ""))
-        if tx is None:
-            logger.info("Take profit sell skipped: %s", trader.last_skip_reason)
+        tx_hash = await self._trader.sell(token, USDC_BASE, int(amount_out),
+                                           source_tx=pos.get("tx_hash", ""))
+        if tx_hash is None:
+            logger.info("Take profit sell skipped: %s", self._trader.last_skip_reason)
             return
 
         pnl = current_usd - cost_usd
-
-        await close_position(
-            position_id=pos["position_id"],
-            exit_price=current_usd / amount_out if amount_out else 0,
-            roi_pct=roi * 100,
-            pnl=pnl,
-        )
-
-        await self._on_take_profit(pos, roi, pnl)
+        await self._on_take_profit(pos, roi * 100, pnl)

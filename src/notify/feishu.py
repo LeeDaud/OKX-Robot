@@ -98,47 +98,17 @@ class FeishuNotifier:
 
     # ── 公开通知方法 ──────────────────────────────────────────
 
-    async def notify_swap_alert(
-        self,
-        source_tx: str,
-        symbol_in: str,
-        symbol_out: str,
-        token_in: str,
-        token_out: str,
-        amount_display: float,
-        amount_unit: str,
-        side: str,
-        auto_followed: bool,
-        wallet_label: str = "",
-    ) -> None:
+    async def notify_alert(self, message: str) -> None:
+        """发送简单文本通知。"""
         now_cst = datetime.now(CST).strftime("%m-%d %H:%M")
-        view_token = token_out if side == "buy" else token_in
-
-        if auto_followed:
-            status_line = "✅ 已自动跟单"
-            color = "green" if side == "buy" else "orange"
-        else:
-            status_line = "⚠️ 未自动跟单，请手动操作"
-            color = "yellow"
-
-        amount_str = f"${amount_display:.2f} {amount_unit}" if amount_unit == "USDC" else f"{amount_display:.4f} {amount_unit}"
-
-        header_title = f"{symbol_in} → {symbol_out}"
-        if wallet_label:
-            header_title = f"{wallet_label} | {header_title}"
-
         card = {
             "config": {"wide_screen_mode": True},
             "header": {
-                "title": {"tag": "plain_text", "content": header_title},
-                "template": color,
+                "title": {"tag": "plain_text", "content": message},
+                "template": "blue",
             },
             "elements": [
-                self._two_col("方向", f"{symbol_in} → {symbol_out}", "时间", now_cst),
-                self._two_col("金额", amount_str, "跟单状态", status_line),
-                self._divider(),
-                self._buttons("查看代币", BASESCAN_TOKEN + view_token,
-                              "查看原始交易", BASESCAN_TX + source_tx),
+                {"tag": "markdown", "content": f"**时间**: {now_cst}"},
             ],
         }
         await self._send_card(card)

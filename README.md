@@ -1,18 +1,29 @@
 # Auto Trader
 
-Base 链跟单机器人。监控目标钱包地址的链上交易，通过 OKX DEX Aggregator API 自动跟单，支持止盈卖出、风控止损、飞书通知。
+Base 链自动化套利机器人。通过 OKX DEX Aggregator API 执行确定性交易策略：**定时定投积累持仓 → 监控回购事件套利卖出 → 止盈自动退出**，实现稳定的链上套利收益。
+
+## 策略
+
+| 策略 | 说明 |
+|------|------|
+| **定时定投 (DCA)** | 每日指定时间窗口用 USDC 买入目标代币。自动积累持仓 |
+| **回购套利 (Buyback)** | 监控回购地址的链上买入事件，检测到回购立即卖出对应持仓，吃回购拉涨的价差 |
+| **止盈 (Take Profit)** | 定时轮询持仓价格，ROI 达到阈值时自动卖出，锁定利润 |
+
+三种策略形成完整链路：**买入 → 持有 → 卖出**。
 
 ## 功能
 
-- **链上监控** — 通过 `eth_getLogs` 轮询目标地址的 Transfer 事件，支持 Uniswap V2/V3 / Aerodrome / Virtuals 等 DEX
-- **自动跟单** — 买入时用 USDC 支付跟随买入，卖出时将持仓代币换回 USDC
-- **止盈监控** — 定时轮询持仓代币价格，收益率达到阈值自动卖出
-- **回购检测** — 监控指定回购地址的买入行为，立即卖出对应持仓
-- **风控** — 每日亏损上限触发后自动暂停；Gas price 过高时跳过；报价蜜罐/价格影响/税率校验
+- **DCA 定投** — 支持多代币、可配置时间窗口，每日不重复
+- **回购检测** — 通过 `eth_getLogs` 监控指定地址的 ERC-20 Transfer 转入事件
+- **止盈监控** — 定时轮询 OKX 报价，ROI 达标自动卖出
+- **风控** — 每日亏损上限自动暂停；Gas price 过高时跳过；报价安全校验（蜜罐/价格影响/税率）
 - **崩溃恢复** — 交易发出后立即持久化到 SQLite，重启后自动确认并回填成交
-- **飞书通知** — 跟单触发、成交回填、止盈卖出、整点汇报、风控警报
-- **热更新** — `config.yaml` 修改后 60 秒内自动生效，无需重启
-- **Dry-run** — 只打印不发链上交易
+- **进程锁** — 防止重复启动
+- **飞书通知** — 买入触发、卖出成交、止盈、整点汇报、风控警报
+- **状态持久化** — 原子文件写入，崩溃不丢状态
+- **RPC 主备切换** — 主 RPC 超时自动切换到备用 RPC，指数退避防限频
+- **Nonce 重放保护** — 交易广播后验证 nonce 是否消耗，未消耗则重发
 
 ## 快速开始
 
@@ -30,45 +41,55 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-编辑 `.env`，填入：
+编辑 `.env`，填入 RPC 地址、钱包私钥、OKX DEX API 凭证：
 
 | 字段 | 说明 |
 |------|------|
 | `RPC_HTTP_URL` | Base 链 HTTP RPC 地址 |
+| `RPC_HTTP_URL_FALLBACK` | 备用 RPC（可选） |
 | `PRIVATE_KEY` | 执行钱包私钥（`0x` 开头） |
 | `WALLET_ADDRESS` | 执行钱包地址 |
 | `OKX_API_KEY` | OKX DEX API Key |
 | `OKX_SECRET_KEY` | OKX DEX Secret Key |
 | `OKX_PASSPHRASE` | OKX DEX Passphrase |
 
-**3. 配置跟单参数**
+**3. 配置策略参数**
 
 编辑 `config.yaml`：
 
 ```yaml
-copy_targets:
-  - address: "0x目标钱包地址"
+# 定时定投
+dca:
+  enabled: true
+  tokens:
+    - address: "0x目标代币地址"
+      amount_usdc: 2           # 每次定投 2 USDC
+      hour: 24                 # 北京时间 00:00（24 = 次日 0 点）
+      minute: 0
+      window_minutes: 30       # 窗口持续 30 分钟
 
-trade_mode: ratio            # ratio（按余额比例）或 fixed（固定金额）
-trade_ratio: 0.50            # ratio 模式：使用 50% 的 USDC 余额
-trade_fixed_usd: 50          # fixed 模式：每笔 50 USDC
-trade_max_usd: 100           # 单笔上限
-slippage: 0.10               # 最大滑点 10%
+# 回购套利
+buyback_watch:
+  "0x回购地址": "0x目标代币地址"
 
-daily_loss_limit_usd: 10     # 每日最大亏损
-take_profit_roi: 0.30        # 止盈阈值（30%），0 = 不启用
+# 止盈
+take_profit_roi: 0.30          # 30% 止盈
 
-dry_run: true                # 先用 dry-run 测试
+# 运行
+dry_run: true                  # 先用 dry-run 测试
 ```
 
 **4. 运行**
 
 ```bash
+# 配置校验（不启动）
+PYTHONPATH=. python src/main.py --check-config
+
 # Dry-run 模式（默认，不发链上交易）
-python -m src.main
+PYTHONPATH=. python src/main.py --dry-run
 
 # 实盘模式
-python -m src.main --live
+PYTHONPATH=. python src/main.py --live
 ```
 
 ## 目录结构
@@ -78,23 +99,51 @@ src/
 ├── config/       # 配置加载（.env + config.yaml）
 ├── db/           # SQLite 持久化（交易记录、持仓）
 ├── executor/     # OKX DEX 客户端、交易执行（approve + swap）
-├── monitor/      # 链上地址监控、Swap 解码、Tx 过滤
-│   ├── watcher.py   # AddressWatcher：eth_getLogs 轮询
-│   ├── decoder.py   # Swap 事件解析（V2/V3/Transfer 兜底）
-│   └── filter.py    # 代币白名单、最小交易额过滤
+├── monitor/      # 链上监控
+│   └── buyback.py   # 回购事件监控（ERC-20 Transfer → 回购地址）
 ├── notify/       # 飞书群机器人通知
 ├── risk/         # 风控（每日亏损上限、止盈监控）
-└── rpc/          # RPC 路由（主 RPC + 备用 fallback）
+├── rpc/          # RPC 路由（主 RPC + 备用 fallback）
+└── state/        # 状态持久化 + 进程锁
 ```
 
 ## 交易流程
 
 ```
-监控检测 → 解码 Swap → 风控过滤 → 计算跟单金额
-  → OKX 报价 → 报价风控校验（蜜罐/价格影响/税率）
-  → 检查 Allowance → Approve（如需） → 签名广播
-  → 持久化 tx_hash → 等待确认 → 回填成交 → 飞书通知
+                    ┌──────────────────┐
+                    │   DCA 定时器      │
+                    │  (每分钟检查)      │
+                    └───────┬──────────┘
+                            │ 到达时间窗口
+                            ▼
+                    ┌──────────────────┐
+                    │  OKX 报价 → 校验  │
+                    │  Approve → Swap  │
+                    │  回填成交 → 通知  │
+                    └───────┬──────────┘
+                            │ 持仓增加
+                            ▼
+              ┌─────────────┴─────────────┐
+              │                           │
+              ▼                           ▼
+    ┌──────────────────┐       ┌──────────────────┐
+    │  BuybackMonitor  │       │  TakeProfitMonitor│
+    │  (监听回购事件)    │       │  (定时扫描持仓)    │
+    └───────┬──────────┘       └───────┬──────────┘
+            │ 检测到回购                │ ROI 达标
+            ▼                           ▼
+    ┌──────────────────┐       ┌──────────────────┐
+    │  卖出持仓 → 套利  │       │  卖出持仓 → 止盈  │
+    │  记录盈亏 → 通知  │       │  记录盈亏 → 通知  │
+    └──────────────────┘       └──────────────────┘
 ```
+
+## 风控
+
+- **每日亏损上限**：当日已实现亏损超过 `daily_loss_limit_usd` 时暂停所有交易
+- **Gas 保护**：Gas price 超过 `gas_limit_gwei` 时跳过
+- **报价安全**：自动检测蜜罐代币、价格影响 > 5%、税率 > 5% 时跳过
+- **进程锁**：同一时间只允许一个实例运行
 
 ## 部署（VPS）
 
@@ -114,5 +163,12 @@ journalctl -u auto-trader -f
 ## 测试
 
 ```bash
-python -m pytest tests/ -x
+PYTHONPATH=. python -m pytest tests/ -x
 ```
+
+## 与参考项目的关系
+
+本项目借鉴了以下项目的核心模式：
+
+- **Auto-Buyer** — DCA 定投策略、状态持久化、原子文件写入
+- **Auto-Seller** — 回购套利检测、交易缓存预加载、多 RPC 广播

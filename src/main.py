@@ -1,41 +1,34 @@
 """
-主入口：初始化所有组件，启动监控循环。
+主入口：套利机器人，启动所有策略监控器。
 用法：
-  python src/main.py              # 读取 config.yaml 中的 dry_run 设置
-  python src/main.py --dry-run    # 强制 dry-run
-  python src/main.py --live       # 强制 live 模式（谨慎）
+  python src/main.py --dry-run
+  python src/main.py --live
+  python src/main.py --check-config
 """
 import asyncio
 import argparse
 import logging
-import time
-from pathlib import Path
 import signal
 import sys
-import uuid
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from decimal import Decimal
 
-from web3 import AsyncWeb3
-from web3.exceptions import TransactionNotFound
-
-from src.config.loader import load_config, reload_yaml, TargetConfig, Config
+from src.config.loader import load_config, Config
 from src.db.database import (
-    init_db, insert_trade, update_trade, update_trade_fill,
-    get_today_pnl, get_today_stats, get_all_stats,
-    get_open_positions, get_open_position_by_token, close_position,
-    get_pending_trades, confirm_tx, set_tx_pending,
-    _amount_to_usd,
+    init_db, insert_buy, insert_sell, get_pending_trades,
+    confirm_tx, get_open_positions, get_open_position_by_token,
+    get_today_pnl,
 )
 from src.executor.okx_client import OKXDexClient
-from src.executor.trader import Trader, ERC20_BALANCE_ABI
-from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, VIRTUALS_BASE, TRANSFER_TOPIC
-from src.monitor.filter import SwapFilter
-from src.monitor.token_resolver import TokenResolver
-from src.monitor.watcher import AddressWatcher
+from src.executor.trader import Trader, USDC_BASE
+from src.monitor.buyback import BuybackMonitor, BuybackEvent
 from src.notify.feishu import FeishuNotifier
 from src.risk.guard import DailyLossGuard
 from src.risk.take_profit import TakeProfitMonitor
 from src.rpc.router import RPCRouter
+from src.state.persistence import StateManager, StrategyState, ProcessLock
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -50,16 +43,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
-STABLE_TOKENS = {USDC_BASE.lower(), USDT_BASE.lower(), VIRTUALS_BASE.lower()}
-
-TRANSFER_TOPIC_HEX = TRANSFER_TOPIC.lstrip("0x").lower() if isinstance(TRANSFER_TOPIC, str) else ""
+CST = timezone(timedelta(hours=8))
 
 
 def _parse_received_amount(logs: list, target_token: str, wallet_addr: str) -> int:
-    """从 receipt logs 解析 target_token 转入钱包的总量（独立版，用于启动恢复）。"""
+    """从 receipt logs 解析 target_token 转入钱包的总量（独立版）。"""
+    from src.executor.trader import TRANSFER_TOPIC
     target_lower = target_token.lower()
     wallet_padded = "0x" + "0" * 24 + wallet_addr[2:]
-    topic0_hex = TRANSFER_TOPIC_HEX
+    topic0_hex = TRANSFER_TOPIC.lstrip("0x").lower()
 
     total = 0
     for log in logs:
@@ -87,25 +79,10 @@ def _parse_received_amount(logs: list, target_token: str, wallet_addr: str) -> i
     return total
 
 
-def validate_runtime_config(cfg: Config) -> list[str]:
+def validate_config(cfg: Config) -> list[str]:
     issues: list[str] = []
-
-    if not cfg.copy_targets:
-        issues.append("copy_targets must contain at least one address")
     if cfg.base_token not in {"VIRTUAL", "USDC"}:
         issues.append(f"base_token must be 'VIRTUAL' or 'USDC', got '{cfg.base_token}'")
-    if cfg.trade_mode not in {"ratio", "fixed", "monitor"}:
-        issues.append(f"trade_mode must be 'ratio', 'fixed', or 'monitor', got '{cfg.trade_mode}'")
-    if cfg.trade_ratio <= 0:
-        issues.append("trade_ratio must be > 0")
-    if cfg.trade_fixed_usd <= 0:
-        issues.append("trade_fixed_usd must be > 0")
-    if cfg.trade_max_usd < 0:
-        issues.append("trade_max_usd must be >= 0")
-    if cfg.trade_fixed_virtuals <= 0:
-        issues.append("trade_fixed_virtuals must be > 0")
-    if cfg.min_trade_usd < 0:
-        issues.append("min_trade_usd must be >= 0")
     if cfg.daily_loss_limit_usd < 0:
         issues.append("daily_loss_limit_usd must be >= 0")
     if not 0 <= cfg.slippage <= 1:
@@ -116,66 +93,115 @@ def validate_runtime_config(cfg: Config) -> list[str]:
         issues.append("take_profit_roi must be >= 0")
     if cfg.take_profit_check_sec <= 0:
         issues.append("take_profit_check_sec must be > 0")
-    if not 0 <= cfg.daily_report_hour_utc <= 23:
-        issues.append("daily_report_hour_utc must be between 0 and 23")
     if cfg.poll_interval_sec <= 0:
         issues.append("poll_interval_sec must be > 0")
 
-    required_values = {
-        "rpc_ws_url": cfg.rpc_ws_url,
-        "rpc_http_url": cfg.rpc_http_url,
-        "private_key": cfg.private_key,
-        "wallet_address": cfg.wallet_address,
-        "okx_api_key": cfg.okx_api_key,
-        "okx_secret_key": cfg.okx_secret_key,
-        "okx_passphrase": cfg.okx_passphrase,
+    required = {
+        "RPC_HTTP_URL": cfg.rpc_http_url,
+        "PRIVATE_KEY": cfg.private_key,
+        "WALLET_ADDRESS": cfg.wallet_address,
+        "OKX_API_KEY": cfg.okx_api_key,
+        "OKX_SECRET_KEY": cfg.okx_secret_key,
+        "OKX_PASSPHRASE": cfg.okx_passphrase,
     }
-    for name, value in required_values.items():
-        if not str(value).strip():
+    for name, val in required.items():
+        if not str(val).strip():
             issues.append(f"{name} must not be empty")
-
-    seen_addresses: set[str] = set()
-    for idx, target in enumerate(cfg.copy_targets, start=1):
-        if not target.address:
-            issues.append(f"copy_targets[{idx}] address must not be empty")
-            continue
-        if target.address in seen_addresses:
-            issues.append(f"copy_targets contains duplicate address: {target.address}")
-        seen_addresses.add(target.address)
-        if target.trade_mode is not None and target.trade_mode not in {"ratio", "fixed", "monitor"}:
-            issues.append(
-                f"copy_targets[{idx}] trade_mode must be 'ratio', 'fixed', or 'monitor', got '{target.trade_mode}'"
-            )
-
     return issues
 
 
 def check_config() -> None:
     cfg = load_config()
-    issues = validate_runtime_config(cfg)
+    issues = validate_config(cfg)
     if issues:
-        for issue in issues:
-            logger.error("Config check failed: %s", issue)
+        for i in issues:
+            logger.error("Config check failed: %s", i)
         raise SystemExit(1)
 
-    logger.info(
-        "Config check passed | dry_run=%s | targets=%d | base_token=%s | trade_mode=%s | poll_interval=%.1fs",
-        cfg.dry_run,
-        len(cfg.copy_targets),
-        cfg.base_token,
-        cfg.trade_mode,
-        cfg.poll_interval_sec,
+    logger.info("Config check passed | dry_run=%s | base_token=%s | buyback_pairs=%d | dca=%s",
+                cfg.dry_run, cfg.base_token, len(cfg.buyback_watch),
+                "enabled" if cfg.dca.enabled else "disabled")
+
+
+async def _get_usdc_balance(w3, wallet: str) -> float:
+    """查询钱包 USDC 余额。"""
+    from src.executor.trader import ERC20_BALANCE_ABI
+    from web3 import AsyncWeb3
+    contract = w3.eth.contract(
+        address=AsyncWeb3.to_checksum_address(USDC_BASE),
+        abi=ERC20_BALANCE_ABI,
     )
-    for target in cfg.copy_targets:
-        logger.info(
-            "Target loaded | address=%s | mode=%s",
-            target.address,
-            target.trade_mode or cfg.trade_mode,
-        )
+    raw = await contract.functions.balanceOf(AsyncWeb3.to_checksum_address(wallet)).call()
+    return raw / 1e6
 
 
-def _is_sell(token_out: str) -> bool:
-    return token_out.lower() in STABLE_TOKENS
+async def _get_token_price_usd(okx: OKXDexClient, token: str) -> float | None:
+    """通过 OKX 报价估算代币的 USDC 价格。"""
+    # 用 0.1 USDC 查价，避免大额报价影响
+    quote = await okx.get_quote(USDC_BASE, token, int(0.1 * 1e6))
+    if quote is None:
+        return None
+    to_amount = float(quote.get("toTokenAmount", "0"))
+    if to_amount <= 0:
+        return None
+    # 0.1 USDC 能买 to_amount 个代币（raw），价格 = 0.1 / (to_amount / 10^18)
+    # 但我们不知道 decimals，所以用 toToken 返回的 decimals
+    to_decimals = int((quote.get("toToken") or {}).get("decimals", 18))
+    token_amount = to_amount / (10 ** to_decimals)
+    return 0.1 / token_amount if token_amount > 0 else None
+
+
+def _in_window(hour: int, minute: int, window_minutes: int, now: datetime) -> bool:
+    """检查当前时间是否在 (hour:minute, hour:minute + window_minutes) 窗口内。
+    特殊处理 hour=24（次日 00:00）。"""
+    if hour == 24:
+        # 假设 day_start 是当天的 00:00，窗口是次日的 00:00 ~ 00:00+window
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        window_start = day_start + timedelta(days=1)
+    else:
+        window_start = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    window_end = window_start + timedelta(minutes=window_minutes)
+    return window_start <= now < window_end
+
+
+async def recover_pending_trades(w3: RPCRouter, wallet_addr: str) -> None:
+    """启动时恢复 pending 交易。"""
+    from web3.exceptions import TransactionNotFound
+    pending = await get_pending_trades()
+    if not pending:
+        return
+
+    wallet_addr = wallet_addr.lower()
+    logger.info("发现 %d 笔待恢复交易", len(pending))
+    for pt in pending:
+        tx_hash = pt.get("our_tx_hash", "")
+        if not tx_hash:
+            continue
+        try:
+            receipt = await w3.eth.get_transaction_receipt(tx_hash)
+            if receipt is None:
+                logger.info("[RECOVER] %s: 尚未上链，跳过", tx_hash[:12])
+                continue
+            if receipt.get("status") == 1:
+                filled_raw = 0
+                try:
+                    filled_raw = _parse_received_amount(
+                        [dict(log) for log in receipt.get("logs", [])],
+                        pt.get("token_address", ""),
+                        wallet_addr,
+                    )
+                except Exception:
+                    pass
+                await confirm_tx(pt["tx_hash"], "success", str(filled_raw))
+                logger.info("[RECOVER] %s: 交易已确认，回填成交", tx_hash[:12])
+            else:
+                await confirm_tx(pt["tx_hash"], "failed")
+                logger.warning("[RECOVER] %s: 链上失败", tx_hash[:12])
+        except TransactionNotFound:
+            logger.warning("[RECOVER] %s: 交易未上链，标记为失败", tx_hash[:12])
+            await confirm_tx(pt["tx_hash"], "failed")
+        except Exception as e:
+            logger.warning("[RECOVER] %s: 恢复失败: %s", tx_hash[:12], e)
 
 
 async def run(dry_run_override: bool | None = None) -> None:
@@ -183,530 +209,274 @@ async def run(dry_run_override: bool | None = None) -> None:
     if dry_run_override is not None:
         cfg.dry_run = dry_run_override
 
-    logger.info("Starting Auto Trader | dry_run=%s | targets=%d",
-                cfg.dry_run, len(cfg.copy_targets))
+    logger.info("Starting Auto Trader | dry_run=%s | base_token=%s",
+                cfg.dry_run, cfg.base_token)
+
+    # 进程锁
+    lock = ProcessLock()
+    if not lock.acquire():
+        logger.error("无法获取进程锁，可能已有实例在运行")
+        return
 
     await init_db()
 
-    # 启动时恢复 pending 交易（借鉴 aidog-auto-buy-bot 的 pendingTx 恢复机制）
-    pending_trades = await get_pending_trades()
-    if pending_trades:
-        wallet_addr = cfg.wallet_address.lower()
-        logger.info("发现 %d 笔待恢复交易", len(pending_trades))
-        for pt in pending_trades:
-            tx_hash = pt.get("our_tx_hash", "")
-            if not tx_hash:
-                continue
-            try:
-                receipt = await w3.eth.get_transaction_receipt(tx_hash)
-                if receipt is None:
-                    logger.info("[RECOVER] %s: 交易尚未上链，跳过", tx_hash[:12])
-                    continue
-                if receipt.get("status") == 1:
-                    filled_raw = 0
-                    try:
-                        filled_raw = _parse_received_amount(
-                            [dict(log) for log in receipt.get("logs", [])],
-                            pt.get("token_out", ""),
-                            wallet_addr,
-                        )
-                    except Exception:
-                        pass
-                    await confirm_tx(pt["source_tx"], "success", str(filled_raw), pt.get("filled_cost_usd", 0))
-                    logger.info("[RECOVER] %s: 交易已确认，回填成交", tx_hash[:12])
-                else:
-                    await confirm_tx(pt["source_tx"], "failed", "0", 0)
-                    logger.warning("[RECOVER] %s: 交易链上失败", tx_hash[:12])
-            except TransactionNotFound:
-                logger.warning("[RECOVER] %s: 交易未上链（不存在），标记为失败", tx_hash[:12])
-                await confirm_tx(pt["source_tx"], "failed", "0", 0)
-            except Exception as e:
-                logger.warning("[RECOVER] %s: 恢复失败: %s", tx_hash[:12], e)
+    w3 = RPCRouter(cfg.rpc_http_url, cfg.rpc_http_url_fallback)
 
-    guard = DailyLossGuard(limit_usd=cfg.daily_loss_limit_usd)
-    today_pnl = await get_today_pnl()
-    guard.record_pnl(today_pnl)
+    await recover_pending_trades(w3, cfg.wallet_address)
+
+    guard = DailyLossGuard(cfg.daily_loss_limit_usd)
+    guard.record_pnl(await get_today_pnl())
 
     notifier = FeishuNotifier(cfg.feishu_webhook_url)
+    state_mgr = StateManager()
+    strategy_state = StrategyState(state_mgr)
 
-    base_address = VIRTUALS_BASE if cfg.base_token == "VIRTUAL" else USDC_BASE
-    base_symbol = cfg.base_token
+    # ── DCA 每日定投 ──────────────────────────────────────────────
 
-    w3 = RPCRouter(cfg.rpc_http_url, cfg.rpc_http_url_fallback)
-    swap_filter = SwapFilter(cfg.token_whitelist, cfg.min_trade_usd)
-    token_resolver = TokenResolver(w3)
+    async def dca_loop(stop: asyncio.Event):
+        if not cfg.dca.enabled or not cfg.dca.tokens:
+            logger.info("DCA 未启用，跳过")
+            return
 
-    def _make_trader(okx: OKXDexClient, target: TargetConfig) -> Trader:
-        return Trader(
+        logger.info("DCA 启动: %d 个代币", len(cfg.dca.tokens))
+        while not stop.is_set():
+            try:
+                now_utc = datetime.now(timezone.utc)
+                # 转换为北京时间用于策略时间判断
+                now_cst = datetime.now(CST)
+                for dc in cfg.dca.tokens:
+                    in_win = _in_window(dc.hour, dc.minute, dc.window_minutes, now_cst)
+                    if not in_win:
+                        continue
+
+                    # 检查今天是否已经买过
+                    last_run = strategy_state.get_last_run(f"dca_{dc.address}")
+                    if last_run and last_run.date() == now_utc.date():
+                        continue
+
+                    if not guard.can_trade():
+                        logger.warning("[DCA] 风控已触发，跳过定投")
+                        continue
+
+                    amount = int(dc.amount_usdc * 1e6)  # USDC 6 decimals
+                    logger.info("[DCA] 执行定投: %s amount=%.2f USDC",
+                                dc.address[:10], dc.amount_usdc)
+
+                    # 先通知
+                    await notifier.notify_alert(f"🔄 DCA 定投触发: {dc.amount_usdc} USDC → {dc.address[:10]}")
+
+                    tx_hash, filled_raw = await trader.buy(
+                        dc.address, amount, source_tx=f"dca_{time.time_ns()}",
+                    )
+
+                    if tx_hash and filled_raw > 0:
+                        cost_usd = dc.amount_usdc
+                        price_usd = cost_usd / (filled_raw / 1e18) if filled_raw > 0 else 0
+                        await insert_buy(tx_hash, dc.address, amount, filled_raw,
+                                         strategy="dca", cost_usd=cost_usd,
+                                         filled_amount=str(filled_raw))
+                        strategy_state.set_last_run(f"dca_{dc.address}")
+                        guard.record_pnl(-cost_usd)
+                        await notifier.notify_trade("dca", dc.address[:10], dc.address[:10],
+                                                     USDC_BASE, dc.address, cost_usd, "USDC",
+                                                     tx_hash, cfg.dry_run, side="buy",
+                                                     wallet_label="DCA")
+                        logger.info("[DCA] 定投成功: tx=%s filled=%d", tx_hash[:12], filled_raw)
+                    else:
+                        reason = trader.last_skip_reason or "执行失败"
+                        await notifier.notify_trade("dca", dc.address[:10], dc.address[:10],
+                                                     USDC_BASE, dc.address, dc.amount_usdc, "USDC",
+                                                     None, cfg.dry_run, side="buy",
+                                                     skip_reason=reason, wallet_label="DCA")
+                        logger.info("[DCA] 跳过: %s", reason)
+
+            except Exception as e:
+                logger.error("[DCA] 循环异常: %s", e)
+
+            await asyncio.sleep(60)
+
+    # ── Buyback 回购监控 ─────────────────────────────────────────
+
+    async def on_buyback(event: BuybackEvent) -> None:
+        """检测到回购事件时，卖出对应持仓。"""
+        try:
+            if not guard.can_trade():
+                logger.info("[BUYBACK] 风控已触发，跳过卖出")
+                return
+
+            # 查对应持仓
+            pos = await get_open_position_by_token(event.token_addr)
+            if pos is None:
+                logger.info("[BUYBACK] 无持仓: %s，跳过", event.token_addr[:10])
+                return
+
+            # 确定卖出数量
+            filled_raw = pos.get("filled_amount")
+            if filled_raw:
+                sell_amount = int(filled_raw)
+                cost_basis = pos.get("cost_usd", 0.0)
+            else:
+                sell_amount = int(pos.get("amount_out", 0))
+                cost_basis = pos.get("cost_usd", 0.0)
+
+            if sell_amount <= 0 or cost_basis <= 0:
+                logger.info("[BUYBACK] 持仓无效: amount=%d cost=%.2f", sell_amount, cost_basis)
+                return
+
+            # 执行卖出
+            tx_hash = await trader.sell(event.token_addr, source_tx=event.tx_hash)
+            if not tx_hash:
+                logger.info("[BUYBACK] 卖出跳过: %s", trader.last_skip_reason)
+                return
+
+            # 算盈亏
+            exit_quote = await okx.get_quote(event.token_addr, USDC_BASE, sell_amount)
+            exit_usd = 0.0
+            if exit_quote:
+                exit_usd = float(exit_quote.get("toTokenAmount", 0)) / 1e6
+
+            pnl = exit_usd - cost_basis
+            roi = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+
+            await insert_sell(
+                tx_hash, event.token_addr, sell_amount, 0,
+                strategy="buyback_sell", cost_usd=cost_basis,
+                pnl_usd=pnl, roi=roi,
+            )
+
+            await notifier.notify_trade(
+                event.tx_hash, event.token_addr[:10], "USDC",
+                event.token_addr, USDC_BASE, exit_usd, "USDC",
+                tx_hash, cfg.dry_run, side="sell",
+                roi_pct=roi, pnl_usd=pnl, wallet_label="Buyback",
+                **({"balance_virtual": 0} if cfg.base_token == "VIRTUAL" else {"balance_usdc": 0}),
+            )
+
+            logger.info("[BUYBACK] 卖出成功: %s pnl=%.2f roi=%.1f%%",
+                        event.token_addr[:10], pnl, roi)
+
+        except Exception as e:
+            logger.error("[BUYBACK] 处理失败: %s", e)
+
+    # ── Take Profit 止盈 ─────────────────────────────────────────
+
+    async def on_take_profit(pos: dict, roi_pct: float, pnl_usd: float) -> None:
+        symbol = pos.get("token_address", "?")[:10]
+        await notifier.notify_take_profit(symbol, pos.get("token_address", ""), roi_pct, pnl_usd)
+        logger.info("[TP] 止盈: %s roi=%.1f%% pnl=%.2f", symbol, roi_pct, pnl_usd)
+
+    # ── 定时汇报 ──────────────────────────────────────────────────
+
+    async def hourly_reporter(stop: asyncio.Event):
+        """每天 UTC 09/13 汇报两次（CST 17:00/21:00）。"""
+        report_hours = [9, 13]
+        while not stop.is_set():
+            now = datetime.now(timezone.utc)
+            now_sec = now.hour * 3600 + now.minute * 60 + now.second
+            next_sec = min(
+                (h * 3600 - now_sec) % (24 * 3600) or 24 * 3600
+                for h in report_hours
+            )
+            try:
+                await asyncio.wait_for(stop.wait(), next_sec)
+                return
+            except asyncio.TimeoutError:
+                pass
+
+            try:
+                # 计算各统计
+                usdc_balance = await _get_usdc_balance(w3, cfg.wallet_address)
+                eth_raw = await w3.eth.get_balance(cfg.wallet_address)
+                balance_eth = eth_raw / 1e18
+
+                open_pos = await get_open_positions()
+                enriched = []
+                for pos in open_pos:
+                    token = pos["token_address"]
+                    amount = int(pos.get("filled_amount", pos.get("amount_out", 0)))
+                    cost = pos.get("cost_usd", 0)
+                    current_usd = cost
+                    roi = 0.0
+                    if amount > 0 and token:
+                        q = await okx.get_quote(token, USDC_BASE, amount)
+                        if q:
+                            current_usd = float(q.get("toTokenAmount", 0)) / 1e6
+                            roi = ((current_usd - cost) / cost * 100) if cost > 0 else 0
+                    enriched.append({
+                        "symbol": token[:10], "token_out": token,
+                        "cost_usd": cost, "current_usd": current_usd, "roi_pct": roi,
+                    })
+
+                from src.db.database import get_all_stats, get_today_stats
+                stats = await get_all_stats()
+                today = await get_today_stats()
+
+                await notifier.notify_hourly_report(
+                    balance_usdc=usdc_balance, balance_eth=balance_eth,
+                    unrealized_pnl=sum(p["current_usd"] - p["cost_usd"] for p in enriched),
+                    realized_pnl=stats["realized_pnl"],
+                    total_invested=stats["total_invested"],
+                    positions=enriched,
+                    today_trades=today["total"],
+                    today_success=today["success"],
+                    today_pnl=today["pnl"],
+                )
+            except Exception as e:
+                logger.warning("Hourly report failed: %s", e)
+
+    # ── 初始化组件 ────────────────────────────────────────────────
+
+    async with OKXDexClient(cfg.okx_api_key, cfg.okx_secret_key, cfg.okx_passphrase) as okx:
+        trader = Trader(
             w3=w3, okx=okx,
             wallet_addr=cfg.wallet_address,
             private_key=cfg.private_key,
             base_token=cfg.base_token,
-            trade_mode=target.trade_mode or cfg.trade_mode,
-            trade_ratio=target.trade_ratio if target.trade_ratio is not None else cfg.trade_ratio,
-            trade_fixed_usd=target.trade_fixed_usd if target.trade_fixed_usd is not None else cfg.trade_fixed_usd,
-            trade_max_usd=target.trade_max_usd if target.trade_max_usd is not None else cfg.trade_max_usd,
-            trade_fixed_virtuals=target.trade_fixed_virtuals if target.trade_fixed_virtuals is not None else cfg.trade_fixed_virtuals,
             slippage=cfg.slippage,
             gas_limit_gwei=cfg.gas_limit_gwei,
             dry_run=cfg.dry_run,
-            trade_retry=cfg.trade_retry,
         )
 
-    addr_to_remark = {t.address: t.remark for t in cfg.copy_targets}
-
-    def _wallet_label(from_addr: str) -> str:
-        remark = addr_to_remark.get(from_addr)
-        if remark:
-            return remark
-        return f"...{from_addr[-4:]}"
-
-    async with OKXDexClient(cfg.okx_api_key, cfg.okx_secret_key, cfg.okx_passphrase) as okx:
-        traders = {t.address: _make_trader(okx, t) for t in cfg.copy_targets}
-
-        # 交易去重：相同代币的买卖 5 分钟内只跟单一次
-        _dedup_window = 300.0
-        _dedup_records: dict[str, float] = {}
-
-        def _is_dedup(side: str, swap: SwapInfo) -> bool:
-            target = swap.token_out if side == "buy" else swap.token_in
-            key = f"{side}:{target}"
-            now = time.time()
-            last = _dedup_records.get(key)
-            if last is not None and (now - last) < _dedup_window:
-                return True
-            _dedup_records[key] = now
-            # 清理过期记录
-            if len(_dedup_records) > 100:
-                expired = [k for k, v in _dedup_records.items() if now - v >= _dedup_window]
-                for k in expired:
-                    del _dedup_records[k]
-            return False
-
-        async def on_swap(swap: SwapInfo) -> None:
-            try:
-                if not guard.can_trade():
-                    await notifier.notify_risk_halt(abs(guard._loss_today), guard._limit)
-                    return
-
-                side = "sell" if _is_sell(swap.token_out) else "buy"
-                position_id = None
-                entry_price = 0.0
-                amount_out = 0.0
-                exit_usd = 0.0
-                roi_pct = None
-                pnl_usd = None
-                skip_reason = ""
-                our_tx = None
-                our_amount_usd = 0.0
-
-                # 交易去重：短时内相同代币的买卖只执行一次
-                if _is_dedup(side, swap):
-                    logger.info("[SKIP DEDUP] %s %s -> %s tx=%s",
-                                side, swap.token_in[:10], swap.token_out[:10], swap.tx_hash[:10])
-                    return
-
-                # ── 回购检测：回购地址买入指定代币 → 立即卖出对应持仓 ──
-                buyback_target = cfg.buyback_watch.get(swap.from_addr.lower())
-                if buyback_target and side == "buy" and swap.token_out.lower() == buyback_target:
-                    open_pos = await get_open_position_by_token(buyback_target)
-                    sell_tx = None
-                    if open_pos:
-                        filled_raw_pos = open_pos.get("filled_amount")
-                        if filled_raw_pos:
-                            sell_amount = int(filled_raw_pos)
-                            cost_basis = open_pos.get("filled_cost_usd", 0.0)
-                        else:
-                            sell_amount = int(open_pos.get("amount_out", 0))
-                            cost_basis = _amount_to_usd(
-                                open_pos.get("amount_in", 0),
-                                open_pos.get("token_in", base_address),
-                            )
-
-                        if sell_amount > 0 and cost_basis > 0:
-                            token_to_sell = open_pos["token_out"]
-                            sell_trader = traders.get(open_pos["source_addr"])
-                            sell_tx = await sell_trader.sell(
-                                token_to_sell, base_address, sell_amount,
-                                source_tx=swap.tx_hash,
-                            ) if sell_trader else None
-
-                            if sell_tx:
-                                pnl = round(-cost_basis, 2)
-                                roi = -100.0
-                                # PnL 估值始终用 USDC（≈USD）
-                                exit_quote = await okx.get_quote(
-                                    token_to_sell, USDC_BASE, sell_amount
-                                )
-                                if exit_quote:
-                                    exit_usd = float(exit_quote.get("toTokenAmount", 0)) / 1e6
-                                if exit_usd > 0:
-                                    pnl = round(exit_usd - cost_basis, 2)
-                                    roi = round((pnl / cost_basis * 100) if cost_basis > 0 else 0, 2)
-                                    await close_position(open_pos["position_id"], exit_usd, roi, pnl)
-                                else:
-                                    await close_position(open_pos["position_id"], 0, 0, -cost_basis)
-
-                                await update_trade(swap.tx_hash, sell_tx, "success")
-
-                    # 录入原始交易
-                    await insert_trade(
-                        swap.tx_hash, swap.from_addr,
-                        swap.token_in, swap.token_out, swap.amount_in,
-                        side="buy", position_id=open_pos["position_id"] if open_pos else None,
-                    )
-
-                    # 通知：回购地址买入检测 + 卖出结果
-                    sym_in, sym_out = await asyncio.gather(
-                        token_resolver.symbol(swap.token_in),
-                        token_resolver.symbol(swap.token_out),
-                    )
-                    if sell_tx:
-                        pnl_display = pnl if exit_usd > 0 else -cost_basis
-                        roi_display = roi if exit_usd > 0 else -100.0
-                        balance_kw = {"balance_virtual": 0} if cfg.base_token == "VIRTUAL" else {"balance_usdc": 0}
-                        await notifier.notify_trade(
-                            swap.tx_hash, sym_in, f"🔄回购{sym_out}",
-                            swap.token_in, swap.token_out,
-                            exit_usd if exit_usd > 0 else 0, base_symbol,
-                            sell_tx, cfg.dry_run,
-                            side="sell", roi_pct=roi_display, pnl_usd=pnl_display,
-                            balance_eth=0,
-                            skip_reason="",
-                            wallet_label=_wallet_label(swap.from_addr),
-                            **balance_kw,
-                        )
-                        logger.info("Buyback sell sent: %s | token=%s", sell_tx, buyback_target[:10])
-                    else:
-                        reason = "模拟运行模式" if cfg.dry_run else (
-                            sell_trader.last_skip_reason if open_pos and sell_trader else "无持仓或持仓为空"
-                        )
-                        balance_kw = {"balance_virtual": 0} if cfg.base_token == "VIRTUAL" else {"balance_usdc": 0}
-                        await notifier.notify_trade(
-                            swap.tx_hash, sym_in, sym_out,
-                            swap.token_in, swap.token_out,
-                            0, base_symbol, None, cfg.dry_run,
-                            side="sell", balance_eth=0,
-                            skip_reason=reason,
-                            wallet_label=_wallet_label(swap.from_addr),
-                            **balance_kw,
-                        )
-                    return  # skip normal flow
-
-                if side == "buy":
-                    position_id = str(uuid.uuid4())
-                    # 查入场价：amount_in USDC 能买多少 token_out
-                    quote = await okx.get_quote(swap.token_in, swap.token_out, swap.amount_in)
-                    if quote:
-                        amount_out = float(quote.get("toTokenAmount", 0))
-                        cost = _amount_to_usd(swap.amount_in, swap.token_in)
-                        entry_price = cost / amount_out if amount_out > 0 else 0
-                else:
-                    # 卖出：匹配持仓，用机器人实际数量跟卖
-                    open_pos = await get_open_position_by_token(swap.token_in)
-                    if open_pos:
-                        position_id = open_pos["position_id"]
-
-                        # 用机器人实际持仓数量卖出
-                        filled_raw_pos = open_pos.get("filled_amount")
-                        if filled_raw_pos:
-                            sell_amount = int(filled_raw_pos)
-                            cost_basis = open_pos.get("filled_cost_usd", 0.0)
-                        else:
-                            sell_amount = int(open_pos.get("amount_out", 0))
-                            cost_basis = _amount_to_usd(
-                                open_pos.get("amount_in", 0),
-                                open_pos.get("token_in", base_address),
-                            )
-
-                        if sell_amount > 0 and cost_basis > 0:
-                            token_to_sell = open_pos["token_out"]
-                            sell_trader = traders.get(swap.from_addr)
-                            sell_tx = await sell_trader.sell(
-                                token_to_sell, base_address, sell_amount,
-                                source_tx=swap.tx_hash,
-                            ) if sell_trader else None
-
-                            if sell_tx:
-                                our_tx = sell_tx
-                                # PnL 估值始终用 USDC（≈USD）
-                                exit_quote = await okx.get_quote(
-                                    token_to_sell, USDC_BASE, sell_amount
-                                )
-                                if exit_quote:
-                                    exit_usd = float(exit_quote.get("toTokenAmount", 0)) / 1e6
-                                if exit_usd > 0:
-                                    pnl_usd = exit_usd - cost_basis
-                                    roi_pct = (pnl_usd / cost_basis * 100) if cost_basis > 0 else 0
-                                    await close_position(position_id, exit_usd, roi_pct, pnl_usd)
-                                    our_amount_usd = exit_usd
-                                else:
-                                    # 查价失败也平仓，防止止盈监控二次卖出
-                                    await close_position(position_id, 0, 0, -cost_basis)
-
-                                await update_trade(swap.tx_hash, sell_tx, "success")
-                            elif sell_trader:
-                                skip_reason = sell_trader.last_skip_reason or "卖出交易广播失败"
-                        else:
-                            skip_reason = "持仓数量为空或成本基础为 0"
-                    else:
-                        skip_reason = "未匹配到对应持仓"
-
-                await insert_trade(
-                    swap.tx_hash, swap.from_addr,
-                    swap.token_in, swap.token_out, swap.amount_in,
-                    side=side, position_id=position_id,
-                    entry_price=entry_price, amount_out=amount_out,
-                )
-
-                # 计算显示金额：根据 token_in 类型确定小数位数
-                if swap.token_in.lower() == USDC_BASE.lower() or swap.token_in.lower() == USDT_BASE.lower():
-                    amount_display = swap.amount_in / 1e6
-                    amount_unit = "USDC"
-                elif swap.token_in.lower() == VIRTUALS_BASE.lower():
-                    amount_display = swap.amount_in / 1e18
-                    amount_unit = "VIRTUAL"
-                else:
-                    # 其他代币默认 18 位小数
-                    amount_display = swap.amount_in / 1e18
-                    amount_unit = "TOKEN"
-
-                # 卖出时如果有出场价值，优先显示
-                if side == "sell" and exit_usd > 0:
-                    amount_display = exit_usd
-                    amount_unit = "USDC"
-
-                symbol_in, symbol_out = await asyncio.gather(
-                    token_resolver.symbol(swap.token_in),
-                    token_resolver.symbol(swap.token_out),
-                )
-
-                trader = traders.get(swap.from_addr)
-
-                # 买入：走 execute（USDC 支付）；卖出：已在上面通过 trader.sell() 处理
-                if side == "buy":
-                    execute_result = await trader.execute(swap, source_tx=swap.tx_hash) if trader else None
-                    our_tx_buy = execute_result[0] if execute_result else None
-                    our_amount_usd_buy = execute_result[1] if execute_result else 0.0
-                    filled_raw_buy = execute_result[2] if execute_result else 0
-
-                    if our_tx_buy and filled_raw_buy > 0:
-                        await update_trade_fill(
-                            swap.tx_hash, our_tx_buy, "success",
-                            str(filled_raw_buy), our_amount_usd_buy,
-                        )
-                        our_tx = our_tx_buy
-                        our_amount_usd = our_amount_usd_buy
-                    elif our_tx_buy:
-                        await update_trade(swap.tx_hash, our_tx_buy, "success")
-                        our_tx = our_tx_buy
-                    else:
-                        if trader:
-                            skip_reason = trader.last_skip_reason or "买入交易执行失败"
-                        await update_trade(swap.tx_hash, None,
-                                           "dry_run" if cfg.dry_run else "failed")
-                else:
-                    # 卖出如果未产生 our_tx（无持仓/量太小/skip），更新 DB 状态
-                    if not our_tx:
-                        await update_trade(swap.tx_hash, None,
-                                           "dry_run" if cfg.dry_run else "failed")
-
-                # 先发 swap alert（无论是否自动跟单都通知）
-                await notifier.notify_swap_alert(
-                    swap.tx_hash, symbol_in, symbol_out,
-                    swap.token_in, swap.token_out,
-                    amount_display, amount_unit, side,
-                    auto_followed=bool(our_tx) or cfg.dry_run,
-                    wallet_label=_wallet_label(swap.from_addr),
-                )
-
-                # 如果有自动跟单结果，再发跟单详情
-                if trader is not None:
-                    base_token_addr = base_address
-                    base_contract = w3.eth.contract(
-                        address=AsyncWeb3.to_checksum_address(base_token_addr),
-                        abi=ERC20_BALANCE_ABI,
-                    )
-                    base_raw, eth_raw = await asyncio.gather(
-                        base_contract.functions.balanceOf(
-                            AsyncWeb3.to_checksum_address(cfg.wallet_address)
-                        ).call(),
-                        w3.eth.get_balance(AsyncWeb3.to_checksum_address(cfg.wallet_address)),
-                    )
-                    base_decimals = 18 if cfg.base_token == "VIRTUAL" else 6
-                    balance_base = base_raw / (10 ** base_decimals)
-                    balance_eth = eth_raw / 1e18
-                    # 自动跟单时显示实际跟单金额，否则显示跟单钱包金额
-                    notify_amount = our_amount_usd if our_amount_usd > 0 else amount_display
-                    notify_unit = base_symbol if our_amount_usd > 0 else amount_unit
-                    balance_kw = {"balance_virtual": balance_base} if cfg.base_token == "VIRTUAL" else {"balance_usdc": balance_base}
-                    await notifier.notify_trade(
-                        swap.tx_hash, symbol_in, symbol_out,
-                        swap.token_in, swap.token_out,
-                        notify_amount, notify_unit, our_tx, cfg.dry_run,
-                        side=side, roi_pct=roi_pct, pnl_usd=pnl_usd,
-                        balance_eth=balance_eth,
-                        skip_reason=skip_reason,
-                        wallet_label=_wallet_label(swap.from_addr),
-                        **balance_kw,
-                    )
-
-                if our_tx:
-                    logger.info("Trade sent: %s", our_tx)
-            except Exception as e:
-                logger.error("on_swap failed: %s | tx=%s token=%s",
-                             e, swap.tx_hash[:10], swap.token_in[:10])
-                try:
-                    sym_in = await token_resolver.symbol(swap.token_in)
-                    sym_out = await token_resolver.symbol(swap.token_out)
-                except Exception:
-                    sym_in, sym_out = swap.token_in[:10], swap.token_out[:10]
-                await notifier.notify_trade(
-                    swap.tx_hash, sym_in, sym_out,
-                    swap.token_in, swap.token_out,
-                    swap.amount_in / 1e18, "TOKEN", None, cfg.dry_run,
-                    side="?", balance_eth=0,
-                    wallet_label=_wallet_label(swap.from_addr),
-                    **({"balance_virtual": 0} if cfg.base_token == "VIRTUAL" else {"balance_usdc": 0}),
-                )
-
-        async def on_take_profit(pos: dict, roi: float, pnl: float) -> None:
-            symbol = await token_resolver.symbol(pos["token_out"])
-            await notifier.notify_take_profit(symbol, pos["token_out"], roi * 100, pnl)
-
-        async def config_reloader() -> None:
-            while True:
-                await asyncio.sleep(60)
-                try:
-                    reload_yaml(cfg)
-                    swap_filter.update(cfg.token_whitelist, cfg.min_trade_usd)
-                    for addr, trader in traders.items():
-                        target = next((t for t in cfg.copy_targets if t.address == addr), None)
-                        trader._mode = (target.trade_mode if target and target.trade_mode else cfg.trade_mode)
-                        trader._ratio = (target.trade_ratio if target and target.trade_ratio is not None else cfg.trade_ratio)
-                        trader._fixed_usd = (target.trade_fixed_usd if target and target.trade_fixed_usd is not None else cfg.trade_fixed_usd)
-                        trader._max_usd = (target.trade_max_usd if target and target.trade_max_usd is not None else cfg.trade_max_usd)
-                        trader._fixed_virtuals = (target.trade_fixed_virtuals if target and target.trade_fixed_virtuals is not None else cfg.trade_fixed_virtuals)
-                        trader._slippage = cfg.slippage
-                        trader._dry_run = cfg.dry_run
-                    guard._limit = cfg.daily_loss_limit_usd
-                    tp_monitor._roi_threshold = cfg.take_profit_roi
-                    tp_monitor._interval = cfg.take_profit_check_sec
-                    logger.info("Config reloaded: base_token=%s mode=%s ratio=%.2f tp_roi=%.0f%%",
-                                cfg.base_token, cfg.trade_mode, cfg.trade_ratio, cfg.take_profit_roi * 100)
-                except Exception as e:
-                    logger.warning("Config reload failed: %s", e)
-
-        async def hourly_reporter() -> None:
-            # 每天 09:00/12:00/15:00/18:00/21:00 CST（即 UTC 01/04/07/10/13）各汇报一次
-            # 21:00（UTC 13）那次附带今日交易统计
-            report_hours_utc = [1, 4, 7, 10, 13]
-            while True:
-                now = datetime.now(timezone.utc)
-                now_total_sec = now.hour * 3600 + now.minute * 60 + now.second
-                seconds_until = min(
-                    (h * 3600 - now_total_sec) % (24 * 3600) or 24 * 3600
-                    for h in report_hours_utc
-                )
-                logger.info("Hourly reporter: next report in %d seconds (%.1f min)", seconds_until, seconds_until / 60)
-                await asyncio.sleep(seconds_until)
-                logger.info("Hourly reporter: woke up, generating report...")
-                try:
-                    fire_hour = datetime.now(timezone.utc).hour
-                    base_decimals = 18 if cfg.base_token == "VIRTUAL" else 6
-                    base_contract = w3.eth.contract(
-                        address=AsyncWeb3.to_checksum_address(base_address),
-                        abi=ERC20_BALANCE_ABI,
-                    )
-                    raw_balance, eth_raw = await asyncio.gather(
-                        base_contract.functions.balanceOf(AsyncWeb3.to_checksum_address(cfg.wallet_address)).call(),
-                        w3.eth.get_balance(AsyncWeb3.to_checksum_address(cfg.wallet_address)),
-                    )
-                    balance_base = raw_balance / (10 ** base_decimals)
-                    balance_eth = eth_raw / 1e18
-
-                    open_pos = await get_open_positions()
-                    unrealized_pnl = 0.0
-                    enriched = []
-                    for pos in open_pos:
-                        token = pos["token_out"]
-                        amount_out = pos.get("amount_out", 0)
-                        cost_usd = _amount_to_usd(pos.get("amount_in", 0), pos.get("token_in", base_address))
-                        current_usd = cost_usd
-                        roi = 0.0
-                        if amount_out > 0:
-                            q = await okx.get_quote(token, USDC_BASE, int(amount_out))
-                            if q:
-                                current_usd = float(q.get("toTokenAmount", 0)) / 1e6
-                                roi = ((current_usd - cost_usd) / cost_usd * 100) if cost_usd > 0 else 0
-                        unrealized_pnl += current_usd - cost_usd
-                        sym = await token_resolver.symbol(token)
-                        enriched.append({
-                            "symbol": sym, "token_out": token,
-                            "cost_usd": cost_usd, "current_usd": current_usd, "roi_pct": roi,
-                        })
-
-                    stats = await get_all_stats()
-
-                    # 21:00 CST（UTC 13）附带今日统计
-                    today_trades = today_success = today_pnl = None
-                    if fire_hour == 13:
-                        today = await get_today_stats()
-                        today_trades = today["total"]
-                        today_success = today["success"]
-                        today_pnl = today["pnl"]
-
-                    await notifier.notify_hourly_report(
-                        balance_usdc=balance_base,
-                        balance_virtual=balance_base if cfg.base_token == "VIRTUAL" else 0,
-                        balance_eth=balance_eth,
-                        unrealized_pnl=unrealized_pnl,
-                        realized_pnl=stats["realized_pnl"],
-                        total_invested=stats["total_invested"],
-                        positions=enriched,
-                        today_trades=today_trades,
-                        today_success=today_success,
-                        today_pnl=today_pnl,
-                    )
-                except Exception as e:
-                    logger.warning("Hourly report failed: %s", e)
+        buyback_monitor = BuybackMonitor(
+            w3=w3,
+            watch_pairs=cfg.buyback_watch,
+            poll_interval=cfg.poll_interval_sec,
+            on_buyback=on_buyback,
+        )
 
         tp_monitor = TakeProfitMonitor(
-            okx=okx,
-            traders=traders,
-            take_profit_roi=cfg.take_profit_roi,
+            okx=okx, trader=trader,
+            roi_threshold=cfg.take_profit_roi,
             check_interval=cfg.take_profit_check_sec,
             on_take_profit=on_take_profit,
         )
 
-        watcher = AddressWatcher(
-            w3=w3,
-            targets=list(set([t.address for t in cfg.copy_targets] + list(cfg.buyback_watch.keys()))),
-            on_swap=on_swap,
-            swap_filter=swap_filter,
-            poll_interval=cfg.poll_interval_sec,
-        )
-
+        # 启动
         stop_event = asyncio.Event()
-
         def _shutdown(*_):
-            logger.info("Shutting down...")
+            logger.info("收到关闭信号，正在停止...")
             stop_event.set()
-
         signal.signal(signal.SIGINT, _shutdown)
         signal.signal(signal.SIGTERM, _shutdown)
 
+        logger.info("所有组件已初始化，开始运行")
+
         tasks = [
-            asyncio.create_task(watcher.start()),
-            asyncio.create_task(config_reloader()),
-            asyncio.create_task(hourly_reporter()),
+            asyncio.create_task(buyback_monitor.start()),
+            asyncio.create_task(dca_loop(stop_event)),
             asyncio.create_task(tp_monitor.start()),
+            asyncio.create_task(hourly_reporter(stop_event)),
         ]
+
         await stop_event.wait()
-        await watcher.stop()
+
+        await buyback_monitor.stop()
         await tp_monitor.stop()
         for t in tasks:
             t.cancel()
+
+    lock.release()
+    logger.info("正常退出")
 
 
 def main() -> None:
@@ -714,7 +484,7 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--dry-run", action="store_true", help="强制 dry-run 模式")
     group.add_argument("--live", action="store_true", help="强制 live 模式")
-    parser.add_argument("--check-config", action="store_true", help="validate .env and config.yaml only")
+    parser.add_argument("--check-config", action="store_true", help="仅校验配置")
     args = parser.parse_args()
 
     if args.check_config:

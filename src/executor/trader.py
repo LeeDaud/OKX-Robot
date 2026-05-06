@@ -1,19 +1,23 @@
 """
-跟单执行器：计算跟单金额 → 获取报价 → 签名 → 广播（或 dry-run 打印）。
+交易执行器：买入/卖出，通过 OKX DEX API 获取报价并签名广播。
 """
 import asyncio
 import logging
-from decimal import Decimal
 from typing import Optional
 
 from web3 import AsyncWeb3
 from eth_account import Account
 
 from src.executor.okx_client import OKXDexClient
-from src.monitor.decoder import SwapInfo, USDC_BASE, USDT_BASE, VIRTUALS_BASE, TRANSFER_TOPIC
 from src.db.database import set_tx_pending
 
 logger = logging.getLogger(__name__)
+
+# Base 链常用代币
+USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+USDT_BASE = "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2"
+VIRTUALS_BASE = "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b"
+TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
 ERC20_SHORT_ABI = [
     {
@@ -66,203 +70,175 @@ ERC20_BALANCE_ABI = [
 GAS_LIMIT_MULTIPLIER = 1.2
 MAX_UINT256 = 2**256 - 1
 
-STABLE_TOKENS = {USDC_BASE.lower(), USDT_BASE.lower(), VIRTUALS_BASE.lower()}
+# 基础代币配置：address → (decimals, symbol)
+BASE_TOKEN_CONFIG = {
+    "USDC":    (USDC_BASE, 6),
+    "VIRTUAL": (VIRTUALS_BASE, 18),
+}
 
 
 class Trader:
+    """交易执行器，封装买入和卖出的完整流程。"""
+
     def __init__(
         self,
         w3: AsyncWeb3,
         okx: OKXDexClient,
         wallet_addr: str,
         private_key: str,
-        base_token: str,
-        trade_mode: str,
-        trade_ratio: float,
-        trade_fixed_usd: float,
-        trade_max_usd: float,
-        trade_fixed_virtuals: float,
-        slippage: float,
-        gas_limit_gwei: float,
-        dry_run: bool,
-        trade_retry: int = 0,
+        base_token: str = "USDC",
+        slippage: float = 0.01,
+        gas_limit_gwei: float = 50,
+        dry_run: bool = True,
     ) -> None:
         self._w3 = w3
         self._okx = okx
         self._wallet = wallet_addr.lower()
         self._pk = private_key
         self._base_token = base_token.upper()
-        self._mode = trade_mode
-        self._ratio = trade_ratio
-        self._fixed_usd = trade_fixed_usd
-        self._max_usd = trade_max_usd
-        self._fixed_virtuals = trade_fixed_virtuals
         self._slippage = slippage
         self._gas_limit_gwei = gas_limit_gwei
         self._dry_run = dry_run
-        self._trade_retry = trade_retry
         self.last_skip_reason = ""
 
     @property
-    def _base_address(self) -> str:
-        return VIRTUALS_BASE if self._base_token == "VIRTUAL" else USDC_BASE
+    def base_address(self) -> str:
+        return BASE_TOKEN_CONFIG[self._base_token][0]
 
     @property
-    def _base_decimals(self) -> int:
-        return 18 if self._base_token == "VIRTUAL" else 6
+    def base_decimals(self) -> int:
+        return BASE_TOKEN_CONFIG[self._base_token][1]
 
-    async def execute(self, swap: SwapInfo, source_tx: str = "") -> tuple[Optional[str], float, int]:
+    # ── 公开 API ─────────────────────────────────────────────────
+
+    async def buy(
+        self,
+        token_address: str,
+        amount_in: int,
+        source_tx: str = "",
+    ) -> tuple[Optional[str], int]:
         """
-        执行跟单。返回 (txhash, amount_usd, filled_amount_raw)。
-        - 跳过时返回 (None, 0.0, 0)
-        - dry-run 时返回 (None, 计算金额, 0)
-        - 成功时返回 (txhash, 实际跟单金额, 实际收到 token 原始数量)
-        支付代币由 base_token 配置决定（VIRTUAL 或 USDC）。
-        source_tx 用于发交易后立即持久化 tx_hash，支持 crash 恢复。
+        买入代币：用 base_token 换取目标代币。
+
+        Args:
+            token_address: 目标代币地址
+            amount_in: 支付 base_token 数量（raw，如 USDC 6 decimals）
+            source_tx: 触发源交易哈希（用于崩溃恢复追踪）
+
+        Returns:
+            (tx_hash or None, filled_amount_raw)
         """
         self.last_skip_reason = ""
 
-        if self._mode == "monitor":
-            self.last_skip_reason = "监测模式，跳过跟单"
-            logger.info("[SKIP] %s", self.last_skip_reason)
-            return (None, 0.0, 0)
-
-        is_buy = swap.token_out.lower() not in STABLE_TOKENS
-        payment_token = self._base_address if is_buy else swap.token_in
-        target_token = swap.token_out if is_buy else self._base_address
-
-        amount_in = await self._calculate_amount()
-        if amount_in is None or amount_in <= 0:
-            self.last_skip_reason = f"{self._base_token} 余额不足或金额太小"
-            logger.info("[SKIP] %s", self.last_skip_reason)
-            return (None, 0.0, 0)
+        if amount_in <= 0:
+            self.last_skip_reason = "买入金额 <= 0"
+            return (None, 0)
 
         if not await self._check_gas():
-            self.last_skip_reason = f"Gas 过高（>{self._gas_limit_gwei} gwei）"
-            logger.info("[SKIP] %s", self.last_skip_reason)
-            return (None, 0.0, 0)
+            return (None, 0)
 
         quote = await self._okx.get_quote(
-            payment_token, target_token, amount_in, self._slippage
+            self.base_address, token_address, amount_in, self._slippage
         )
         if quote is None:
-            self.last_skip_reason = "OKX 无可用买入报价路由"
-            logger.warning("[SKIP] %s", self.last_skip_reason)
-            return (None, 0.0, 0)
+            self.last_skip_reason = "OKX 无可用买入报价"
+            logger.warning("[SKIP BUY] %s", self.last_skip_reason)
+            return (None, 0)
 
-        # 报价安全校验
         try:
             self._validate_quote(quote)
         except ValueError as e:
             self.last_skip_reason = f"报价校验不通过: {e}"
-            logger.warning("[SKIP] %s", self.last_skip_reason)
-            return (None, 0.0, 0)
+            logger.warning("[SKIP BUY] %s", self.last_skip_reason)
+            return (None, 0)
 
-        amount_base = amount_in / (10 ** self._base_decimals)
-        max_attempts = 1 + self._trade_retry
+        amount_base = amount_in / (10 ** self.base_decimals)
+        logger.info(
+            "[%s] BUY %s with %.4f %s | expected_out=%s",
+            "DRY-RUN" if self._dry_run else "LIVE",
+            token_address[:10], amount_base, self._base_token,
+            quote.get("toTokenAmount", "?"),
+        )
 
-        for attempt in range(max_attempts):
-            if attempt > 0:
-                logger.info("[RETRY] 第 %d/%d 次重试 %s -> %s",
-                            attempt, self._trade_retry,
-                            payment_token[:10], target_token[:10])
-                await asyncio.sleep(2)
+        if self._dry_run:
+            return (None, 0)
 
-            quote = await self._okx.get_quote(
-                payment_token, target_token, amount_in, self._slippage
-            )
-            if quote is None:
-                msg = "OKX 无可用买入报价路由"
-                if attempt < max_attempts - 1:
-                    logger.warning("[RETRY] %s，等待重试", msg)
-                    continue
-                self.last_skip_reason = msg
-                logger.warning("[SKIP] %s", msg)
-                return (None, 0.0, 0)
+        tx_hash = await self._send_swap(self.base_address, token_address, amount_in,
+                                         source_tx=source_tx, stage="buy")
+        if not tx_hash:
+            return (None, 0)
 
-            # 报价安全校验
-            try:
-                self._validate_quote(quote)
-            except ValueError as e:
-                msg = f"报价校验不通过: {e}"
-                if attempt < max_attempts - 1:
-                    logger.warning("[RETRY] %s，等待重试", msg)
-                    continue
-                self.last_skip_reason = msg
-                logger.warning("[SKIP] %s", msg)
-                return (None, 0.0, 0)
-
-            to_amount = quote.get("toTokenAmount", "?")
-            logger.info(
-                "[%s] attempt %d/%d %s -> %s | amount_in=%d (%.2f %s) | expected_out=%s",
-                "DRY-RUN" if self._dry_run else "LIVE",
-                attempt + 1, max_attempts,
-                payment_token[:10], target_token[:10],
-                amount_in, amount_base, self._base_token,
-                to_amount,
-            )
-
-            if self._dry_run:
-                return (None, amount_base, 0)
-
-            tx_hash = await self._send_swap(payment_token, target_token, amount_in,
-                                             source_tx=source_tx, stage="swap")
-            if not tx_hash:
-                if attempt < max_attempts - 1:
-                    logger.warning("[RETRY] 发交易失败，等待重试")
-                    continue
-                return (None, amount_base, 0)
-
-            filled_raw = await self._confirm_and_parse(tx_hash, target_token)
-            if filled_raw > 0:
-                return (tx_hash, amount_base, filled_raw)
-
-            logger.warning("[RETRY] attempt %d/%d 链上失败或未收到代币 (tx=%s)",
-                           attempt + 1, max_attempts, tx_hash[:10])
-
-        return (None, amount_base, 0)
-
-    async def _calculate_amount(self) -> Optional[int]:
-        """根据 base_token 计算跟单金额。
-        VIRTUAL 模式：固定 fixed_virtuals 个 VIRTUAL。
-        USDC 模式：根据 trade_mode (ratio/fixed) 计算 USDC 数量。
-        """
-        if self._base_token == "VIRTUAL":
-            balance = await self._get_token_balance(VIRTUALS_BASE)
-            if balance is None:
-                return None
-
-            amount = int(Decimal(str(self._fixed_virtuals)) * Decimal("1e18"))
-            if balance < amount:
-                self.last_skip_reason = (
-                    f"VIRTUAL 余额不足: {balance / 1e18:.2f} < {self._fixed_virtuals}"
-                )
-                return None
-            return amount
+        filled_raw = await self._confirm_and_parse(tx_hash, token_address)
+        if filled_raw > 0:
+            logger.info("[BUY OK] tx=%s filled=%d", tx_hash[:12], filled_raw)
         else:
-            # USDC 模式
-            balance = await self._get_token_balance(USDC_BASE)
-            if balance is None:
-                return None
+            logger.warning("[BUY WARN] tx=%s: no token received", tx_hash[:12])
 
-            usdc_balance = balance / 1e6
-            if usdc_balance <= 0:
-                self.last_skip_reason = f"USDC 余额为 0"
-                return None
+        return (tx_hash, filled_raw)
 
-            if self._mode == "ratio":
-                amount = int(usdc_balance * self._ratio)
-            else:  # fixed
-                amount = self._fixed_usd
+    async def sell(
+        self,
+        token_in: str,
+        token_out: str | None = None,
+        amount: int = 0,
+        source_tx: str = "",
+    ) -> Optional[str]:
+        """
+        卖出代币：将持仓代币换回 base_token。
 
-            if self._max_usd > 0:
-                amount = min(amount, self._max_usd)
+        Args:
+            token_in: 要卖出的代币地址
+            token_out: 收款代币地址（None 则使用 base_token）
+            amount: 卖出数量(raw)，0 表示卖出全部余额
+            source_tx: 触发源交易哈希（用于崩溃恢复追踪）
 
-            if amount <= 0:
-                self.last_skip_reason = f"计算金额 <= 0: mode={self._mode} amount={amount}"
-                return None
+        Returns:
+            tx_hash or None
+        """
+        self.last_skip_reason = ""
+        token_out = token_out or self.base_address
+        total_balance = await self._get_token_balance(token_in)
 
-            return int(amount * 1e6)
+        if total_balance is None or total_balance <= 0:
+            self.last_skip_reason = "持仓余额为 0"
+            logger.info("[SKIP SELL] %s", self.last_skip_reason)
+            return None
+
+        sell_amount = amount if amount > 0 else total_balance
+        if sell_amount > total_balance:
+            sell_amount = total_balance
+
+        if not await self._check_gas():
+            return None
+
+        quote = await self._okx.get_quote(token_in, token_out, sell_amount, self._slippage)
+        if quote is None:
+            self.last_skip_reason = "OKX 无可用卖出报价"
+            logger.warning("[SKIP SELL] %s", self.last_skip_reason)
+            return None
+
+        try:
+            self._validate_quote(quote)
+        except ValueError as e:
+            self.last_skip_reason = f"卖出报价校验不通过: {e}"
+            logger.warning("[SKIP SELL] %s", self.last_skip_reason)
+            return None
+
+        logger.info(
+            "[%s] SELL %s -> %s | amount=%d | expected_out=%s",
+            "DRY-RUN" if self._dry_run else "LIVE",
+            token_in[:10], token_out[:10], sell_amount,
+            quote.get("toTokenAmount", "?"),
+        )
+
+        if self._dry_run:
+            self.last_skip_reason = "模拟运行模式"
+            return None
+
+        return await self._send_swap(token_in, token_out, sell_amount,
+                                     source_tx=source_tx, stage="sell")
+
+    # ── 内部辅助 ─────────────────────────────────────────────────
 
     async def _get_token_balance(self, token_addr: str) -> Optional[int]:
         try:
@@ -283,13 +259,13 @@ class Trader:
             gas_gwei = gas_price / 1e9
             if gas_gwei > self._gas_limit_gwei:
                 logger.warning("Gas too high: %.1f gwei > limit %.1f", gas_gwei, self._gas_limit_gwei)
+                self.last_skip_reason = f"Gas 过高 ({gas_gwei:.1f} > {self._gas_limit_gwei} gwei)"
                 return False
             return True
         except Exception:
             return True  # 查询失败时不阻断
 
     def _validate_quote(self, quote: dict) -> None:
-        """对 OKX 报价做安全校验，借鉴 aidog-auto-buy-bot 的风控模式。"""
         to_token = quote.get("toToken", {}) or {}
         from_token = quote.get("fromToken", {}) or {}
 
@@ -305,7 +281,6 @@ class Trader:
             raise ValueError(f"Token tax rate {tax_rate*100:.1f}% exceeds 5% limit")
 
     async def _check_and_approve(self, token_addr: str, spender: str, amount_needed: int) -> bool:
-        """检查 allowance，不够则返回 True 表示需要 approve。"""
         try:
             contract = self._w3.eth.contract(
                 address=AsyncWeb3.to_checksum_address(token_addr),
@@ -322,10 +297,9 @@ class Trader:
             return True
         except Exception as e:
             logger.warning("检查 allowance 失败: %s", e)
-            return True  # 保守起见，查询失败时也 approve
+            return True
 
     async def _approve_and_wait(self, token_addr: str, spender: str, amount: int) -> bool:
-        """发送 approve 交易并等待确认。返回 True 表示成功。"""
         try:
             contract = self._w3.eth.contract(
                 address=AsyncWeb3.to_checksum_address(token_addr),
@@ -364,7 +338,6 @@ class Trader:
             return False
 
     async def _confirm_and_parse(self, tx_hash: str, target_token: str) -> int:
-        """等待交易确认，返回实际收到的 target_token 数量（raw）。"""
         receipt = await self._wait_for_receipt(tx_hash)
         if receipt is None:
             logger.warning("[FILL] Receipt not found for %s", tx_hash[:10])
@@ -380,9 +353,6 @@ class Trader:
         return filled
 
     async def _wait_for_receipt(self, tx_hash: str, max_wait: int = 15) -> Optional[dict]:
-        """轮询等待交易收据，最多 max_wait 秒。
-        TransactionNotFound 视为终态，立即返回 None 避免无谓等待。
-        """
         from web3.exceptions import TransactionNotFound
         for _ in range(max_wait * 2):
             try:
@@ -398,7 +368,6 @@ class Trader:
         return None
 
     def _parse_received_amount(self, logs: list, target_token: str) -> int:
-        """从 receipt logs 中解析 target_token 转入本钱包的总量。"""
         target_lower = target_token.lower()
         wallet_padded = "0x" + "0" * 24 + self._wallet[2:]
         transfer_topic = TRANSFER_TOPIC.lstrip("0x").lower()
@@ -438,30 +407,23 @@ class Trader:
 
         tx = tx_data.get("tx", {})
 
-        # OKX V6 可能返回 dexTokenApproveAddress，需要先 approve 该地址
-        # OKX V6 实测对于 VIRTUAL 等 ERC20 代币返回空地址，此时 fallback 到 tx.to（DEX Router）
         approve_addr = tx_data.get("dexTokenApproveAddress", "") or tx.get("to", "")
         if approve_addr:
-            need_approve = await self._check_and_approve(
-                token_in, approve_addr, amount_in
-            )
+            need_approve = await self._check_and_approve(token_in, approve_addr, amount_in)
             if need_approve:
                 logger.info("需要 approve %s -> %s，额度 %d", token_in[:12], approve_addr[:12], amount_in)
                 if not await self._approve_and_wait(token_in, approve_addr, amount_in):
                     logger.warning("[SKIP] approve 失败")
                     return None
 
-        # OKX 返回的数字字段全是字符串，需要转 int
         for key in ("gas", "gasPrice", "maxPriorityFeePerGas", "value", "maxFeePerGas"):
             val = tx.get(key)
             if val and str(val).isdigit():
                 tx[key] = int(val)
-        # 移除空字符串字段
         for key in list(tx):
             if isinstance(tx[key], str) and tx[key] == "":
                 del tx[key]
-        # EIP-1559 模式下需要 maxFeePerGas 和 maxPriorityFeePerGas
-        # 注意：OKX 返回 gasPrice + maxPriorityFeePerGas 但不含 maxFeePerGas，需要补全
+
         if "maxPriorityFeePerGas" in tx:
             tx["type"] = 2
             if "gasPrice" in tx:
@@ -470,11 +432,10 @@ class Trader:
                 del tx["gasPrice"]
             elif "maxFeePerGas" not in tx:
                 tx["maxFeePerGas"] = tx["maxPriorityFeePerGas"]
-        # OKX 附加字段，非交易字段，需要移除
+
         for key in ("minReceiveAmount", "signatureData", "slippagePercent"):
             tx.pop(key, None)
 
-        # Gas padding（借鉴 aidog-auto-buy-bot）
         if "gas" in tx and isinstance(tx["gas"], int):
             tx["gas"] = int(tx["gas"] * GAS_LIMIT_MULTIPLIER)
 
@@ -489,8 +450,7 @@ class Trader:
         tx_hash = await self._w3.eth.send_raw_transaction(raw)
         tx_hash_hex = tx_hash.hex()
 
-        # 验证交易是否真正传播到链上
-        # drpc.live 等负载均衡 RPC 可能返回哈希但未广播
+        # 非传播验证（drpc.live 等负载均衡 RPC 可能返回哈希但未广播）
         await asyncio.sleep(1.5)
         try:
             post_nonce = await self._w3.eth.get_transaction_count(
@@ -498,10 +458,9 @@ class Trader:
             )
             if post_nonce <= nonce:
                 logger.warning(
-                    "[RETRY] Tx %s: nonce %d not consumed (count=%d), trying fallback broadcast",
-                    tx_hash_hex[:12], nonce, post_nonce,
+                    "[RETRY] Tx %s: nonce %d not consumed, trying fallback broadcast",
+                    tx_hash_hex[:12], nonce,
                 )
-                # 尝试通过主 RPC 再次广播（可能路由到不同节点）
                 await asyncio.sleep(1)
                 tx_hash = await self._w3.eth.send_raw_transaction(raw)
                 tx_hash_hex = tx_hash.hex()
@@ -516,7 +475,7 @@ class Trader:
         except Exception as e:
             logger.warning("[PROPAGATE] Nonce check failed, continuing anyway: %s", e)
 
-        # 发交易后立即持久化 tx_hash（借鉴 aidog-auto-buy-bot 的 pendingTx 机制）
+        # 发交易后立即持久化 tx_hash
         if source_tx:
             try:
                 await set_tx_pending(source_tx, tx_hash_hex, stage)
@@ -526,47 +485,3 @@ class Trader:
                 logger.warning("[PERSIST] failed to save pending tx: %s", e)
 
         return tx_hash_hex
-
-    async def sell(self, token_in: str, token_out: str, amount: int,
-                   source_tx: str = "") -> Optional[str]:
-        """止盈/回购卖出：将持仓代币换回稳定币。
-        source_tx 用于发交易后立即持久化 tx_hash，支持 crash 恢复。"""
-        self.last_skip_reason = ""
-
-        if self._mode == "monitor":
-            self.last_skip_reason = "监测模式，跳过卖出"
-            logger.info("[SKIP SELL] %s", self.last_skip_reason)
-            return None
-
-        if not await self._check_gas():
-            self.last_skip_reason = f"Gas 过高（>{self._gas_limit_gwei} gwei）"
-            logger.info("[SKIP SELL] %s", self.last_skip_reason)
-            return None
-
-        quote = await self._okx.get_quote(token_in, token_out, amount, self._slippage)
-        if quote is None:
-            self.last_skip_reason = "OKX 无可用卖出报价路由"
-            logger.warning("[SKIP SELL] %s", self.last_skip_reason)
-            return None
-
-        # 报价安全校验
-        try:
-            self._validate_quote(quote)
-        except ValueError as e:
-            self.last_skip_reason = f"卖出报价校验不通过: {e}"
-            logger.warning("[SKIP SELL] %s", self.last_skip_reason)
-            return None
-
-        logger.info(
-            "[%s] SELL %s -> %s | amount=%d | expected_out=%s",
-            "DRY-RUN" if self._dry_run else "LIVE",
-            token_in[:10], token_out[:10], amount,
-            quote.get("toTokenAmount", "?"),
-        )
-
-        if self._dry_run:
-            self.last_skip_reason = "模拟运行模式"
-            return None
-
-        return await self._send_swap(token_in, token_out, amount,
-                                     source_tx=source_tx, stage="sell")

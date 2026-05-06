@@ -15,7 +15,7 @@ Base 链上的跟单交易机器人，监控指定钱包地址的链上交易，
 ## 目录结构
 
 ```
-015-Auto-Trader/
+015-OKX-Robot/
 ├── AGENTS.md
 ├── prd.md
 ├── plan.md

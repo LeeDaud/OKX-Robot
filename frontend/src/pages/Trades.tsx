@@ -27,12 +27,15 @@ const strategyLabels: Record<string, string> = {
   buyback_sell: "回购卖",
 };
 
-export default function Trades() {
-  const [strategyFilter, setStrategyFilter] = useState<StrategyFilter>("all");
+export default function Trades({ strategy: propStrategy }: { strategy?: StrategyFilter }) {
+  const [strategyFilter, setStrategyFilter] = useState<StrategyFilter>(propStrategy || "all");
+
+  // Use propStrategy if provided, otherwise use state
+  const activeStrategy = propStrategy || strategyFilter;
 
   const { data: tradesData, isLoading } = useQuery({
-    queryKey: ["trades", strategyFilter],
-    queryFn: () => fetchTrades(100, 0, strategyFilter),
+    queryKey: ["trades", activeStrategy],
+    queryFn: () => fetchTrades(100, 0, activeStrategy),
   });
   const { data: stats } = useQuery<TradeStats>({ queryKey: ["stats"], queryFn: fetchTradeStats });
 
@@ -41,9 +44,12 @@ export default function Trades() {
 
   if (isLoading) return <LoadingState label="正在加载交易记录..." />;
 
+  const pageTitle = propStrategy === "copy" ? "跟单交易记录" : propStrategy === "grid" ? "策略交易记录" : "交易记录";
+  const pageDesc = propStrategy === "copy" ? "跟单交易的完整记录" : propStrategy === "grid" ? "网格策略交易的完整记录" : "跟单与策略交易的完整记录";
+
   return (
     <div className="space-y-6">
-      <PageHeader title="交易记录" description="跟单与策略交易的完整记录" />
+      <PageHeader title={pageTitle} description={pageDesc} />
 
       {stats && (
         <div className="grid gap-4 sm:grid-cols-3">
@@ -54,28 +60,30 @@ export default function Trades() {
       )}
 
       <SectionCard title="交易明细" description={trades.length > 0 ? `最近 ${trades.length} 笔` : undefined}>
-        {/* 策略筛选按钮组 */}
-        <div className="mb-4 flex items-center gap-1.5">
-          <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/60">
-            策略
-          </span>
-          {strategyOptions.map((opt) => (
-            <Button
-              key={opt.value}
-              variant={strategyFilter === opt.value ? "default" : "outline"}
-              size="sm"
-              onClick={() => setStrategyFilter(opt.value)}
-              className={cn(
-                "text-xs",
-                strategyFilter === opt.value
-                  ? ""
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {opt.label}
-            </Button>
-          ))}
-        </div>
+        {/* 策略筛选按钮组 - 仅在非固定策略页面显示 */}
+        {!propStrategy && (
+          <div className="mb-4 flex items-center gap-1.5">
+            <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/60">
+              策略
+            </span>
+            {strategyOptions.map((opt) => (
+              <Button
+                key={opt.value}
+                variant={activeStrategy === opt.value ? "default" : "outline"}
+                size="sm"
+                onClick={() => setStrategyFilter(opt.value)}
+                className={cn(
+                  "text-xs",
+                  activeStrategy === opt.value
+                    ? ""
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {opt.label}
+              </Button>
+            ))}
+          </div>
+        )}
 
         <Table>
           <TableHeader>

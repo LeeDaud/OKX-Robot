@@ -30,7 +30,11 @@ export default function App() {
               <Route path="/wallet" element={<WalletPage />} />
               <Route path="/grid" element={<Grid />} />
               <Route path="/positions" element={<Positions />} />
+              <Route path="/positions/copy" element={<Positions strategy="copy" />} />
+              <Route path="/positions/grid" element={<Positions strategy="grid" />} />
               <Route path="/trades" element={<Trades />} />
+              <Route path="/trades/copy" element={<Trades strategy="copy" />} />
+              <Route path="/trades/grid" element={<Trades strategy="grid" />} />
             </Route>
           </Routes>
         </BrowserRouter>

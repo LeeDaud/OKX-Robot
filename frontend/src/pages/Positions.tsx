@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Copy, Check, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { fetchPositionsAll, refreshPositionsPrices } from "@/lib/api";
-import type { PositionAllResponse } from "@/types/api";
+import type { PositionAllResponse, StrategyFilter } from "@/types/api";
 import { PageHeader, SectionCard, MetricCard, LoadingState, EmptyState } from "@/components/app-primitives";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -78,7 +78,7 @@ type TokenInfo = {
   current_price: number | null
 }
 
-export default function Positions() {
+export default function Positions({ strategy }: { strategy?: StrategyFilter }) {
   const [priceData, setPriceData] = useState<Record<string, PriceData> | null>(null);
   const [tokenInfo, setTokenInfo] = useState<Record<string, TokenInfo> | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -109,8 +109,20 @@ export default function Positions() {
 
   if (isLoading) return <LoadingState label="正在加载持仓数据..." />;
 
-  const open = data?.open ?? [];
-  const closed = data?.closed ?? [];
+  // Filter positions based on strategy prop
+  let open = data?.open ?? [];
+  let closed = data?.closed ?? [];
+
+  if (strategy === "copy") {
+    // Copy trading: strategy is empty string or null
+    open = open.filter((p: any) => !p.strategy || p.strategy === "");
+    closed = closed.filter((p: any) => !p.strategy || p.strategy === "");
+  } else if (strategy === "grid") {
+    // Grid strategy: strategy starts with "grid"
+    open = open.filter((p: any) => p.strategy && p.strategy.startsWith("grid"));
+    closed = closed.filter((p: any) => p.strategy && p.strategy.startsWith("grid"));
+  }
+
   const summary = data?.summary;
   const hasPriceData = priceData && Object.keys(priceData).length > 0;
 
@@ -123,11 +135,14 @@ export default function Positions() {
     }
   }
 
+  const pageTitle = strategy === "copy" ? "跟单持仓" : strategy === "grid" ? "策略持仓" : "持仓管理";
+  const pageDesc = strategy === "copy" ? "跟单交易的当前持仓与历史持仓" : strategy === "grid" ? "网格策略的当前持仓与历史持仓" : "当前持仓与历史持仓概览";
+
   return (
     <div className="space-y-6">
       <PageHeader
-        title="持仓管理"
-        description="当前持仓与历史持仓概览"
+        title={pageTitle}
+        description={pageDesc}
         actions={
           <Button variant="outline" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />

@@ -2,18 +2,20 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Eye, EyeOff, Pencil } from "lucide-react";
-import { fetchWallet, fetchConfig, updateWallet } from "@/lib/api";
-import type { WalletInfo, AppConfig } from "@/types/api";
+import { fetchWallet, fetchConfig, updateWallet, fetchGridState } from "@/lib/api";
+import type { WalletInfo, AppConfig, GridState } from "@/types/api";
 import { PageHeader, SectionCard, LoadingState, StatusBadge } from "@/components/app-primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 export default function WalletPage() {
   const qc = useQueryClient();
   const { data: wallet, isLoading } = useQuery<WalletInfo>({ queryKey: ["wallet"], queryFn: fetchWallet });
   const { data: config } = useQuery<AppConfig>({ queryKey: ["config"], queryFn: fetchConfig });
+  const { data: gridState } = useQuery<GridState>({ queryKey: ["grid-state"], queryFn: fetchGridState });
 
   const [editOpen, setEditOpen] = useState(false);
   const [showSecrets, setShowSecrets] = useState(false);
@@ -68,11 +70,14 @@ export default function WalletPage() {
 
   if (isLoading) return <LoadingState label="正在加载钱包信息..." />;
 
+  const copyEnabled = (config?.copy_targets?.length ?? 0) > 0;
+  const gridEnabled = gridState?.enabled ?? false;
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="执行钱包"
-        description="用于跟单交易的执行钱包信息"
+        description="用于跟单与策略交易的执行钱包信息"
         actions={
           <Button onClick={openEdit}>
             <Pencil className="size-4" />
@@ -109,19 +114,48 @@ export default function WalletPage() {
           </div>
         </SectionCard>
 
-        <SectionCard title="风控状态">
-          <div className="space-y-3">
-            <StatusBadge
-              ok={!config?.dry_run}
-              label="交易执行"
-              hint={config?.dry_run ? "当前为 Dry Run 模式，不会发送真实交易" : "实盘模式，正常执行交易"}
-            />
-            <div className="text-sm text-muted-foreground">
-              日亏损上限：<strong>${config?.daily_loss_limit_usd ?? "-"}</strong>
+        <SectionCard title="执行状态">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">跟单交易</span>
+              <div className="flex items-center gap-2">
+                <span className={cn("size-2 rounded-full", copyEnabled ? "bg-[color:var(--success)]" : "bg-muted-foreground/40")} />
+                <span className="text-sm font-medium">{copyEnabled ? "运行中" : "未启用"}</span>
+              </div>
             </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">网格策略</span>
+              <div className="flex items-center gap-2">
+                <span className={cn("size-2 rounded-full", gridEnabled ? "bg-[color:var(--success)]" : "bg-muted-foreground/40")} />
+                <span className="text-sm font-medium">{gridEnabled ? "运行中" : "未启用"}</span>
+              </div>
+            </div>
+            {copyEnabled && (
+              <div className="pt-2 text-xs text-muted-foreground">
+                跟单目标: <strong>{config?.copy_targets?.length ?? 0}</strong> 个钱包
+              </div>
+            )}
+            {gridEnabled && (
+              <div className="pt-2 text-xs text-muted-foreground">
+                网格代币: <strong>{gridState?.token_symbol || "-"}</strong>
+              </div>
+            )}
           </div>
         </SectionCard>
       </div>
+
+      <SectionCard title="风控状态">
+        <div className="space-y-3">
+          <StatusBadge
+            ok={!config?.dry_run}
+            label="交易执行"
+            hint={config?.dry_run ? "当前为 Dry Run 模式，不会发送真实交易" : "实盘模式，正常执行交易"}
+          />
+          <div className="text-sm text-muted-foreground">
+            日亏损上限：<strong>${config?.daily_loss_limit_usd ?? "-"}</strong>
+          </div>
+        </div>
+      </SectionCard>
 
       <SectionCard title="安全提示">
         <ul className="space-y-2 text-sm text-muted-foreground">

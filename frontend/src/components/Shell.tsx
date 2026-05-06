@@ -25,6 +25,8 @@ const navGroups = [
     label: "总览",
     items: [
       { to: "/", label: "运营概览", icon: LayoutDashboard },
+      { to: "/wallet", label: "执行钱包", icon: Wallet },
+      { to: "/positions", label: "实时持仓", icon: Package },
     ],
   },
   {
@@ -32,19 +34,16 @@ const navGroups = [
     items: [
       { to: "/wallets", label: "跟单钱包", icon: Wallet },
       { to: "/params", label: "跟单参数", icon: SlidersHorizontal },
-      { to: "/positions", label: "实时持仓", icon: Package },
+      { to: "/positions/copy", label: "实时持仓", icon: Package },
+      { to: "/trades/copy", label: "交易记录", icon: History },
     ],
   },
   {
     label: "策略",
     items: [
       { to: "/grid", label: "网格策略", icon: Grid3x3 },
-    ],
-  },
-  {
-    label: "记录",
-    items: [
-      { to: "/trades", label: "交易记录", icon: History },
+      { to: "/positions/grid", label: "实时持仓", icon: Package },
+      { to: "/trades/grid", label: "交易记录", icon: History },
     ],
   },
 ];

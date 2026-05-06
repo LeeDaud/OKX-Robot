@@ -39,6 +39,8 @@ class GridConfig:
     investment_usdc: float = 60.0
     profit_pct: float = 3.0
     max_slots: int = 12
+    volatility_adjust: bool = False
+    volatility_window: int = 20
 
 
 @dataclass
@@ -106,6 +108,8 @@ def _parse_grid(raw: dict | None) -> GridConfig:
         investment_usdc=float(raw.get("investment_usdc", 60)),
         profit_pct=float(raw.get("profit_pct", 3.0)),
         max_slots=int(raw.get("max_slots", 12)),
+        volatility_adjust=bool(raw.get("volatility_adjust", False)),
+        volatility_window=int(raw.get("volatility_window", 20)),
     )
 
 

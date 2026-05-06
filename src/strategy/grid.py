@@ -2,7 +2,9 @@
 网格交易策略：在价格网格的不同价位挂单，跌到位就买，涨到位就卖。
 """
 import logging
+import math
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
@@ -51,6 +53,10 @@ class GridStrategy:
         self._current_price: float = 0.0
         self._initialized = False
         self._max_slots: int = getattr(config, "max_slots", 12)
+        self._volatility_adjust: bool = getattr(config, "volatility_adjust", False)
+        self._vol_window: int = max(getattr(config, "volatility_window", 20), 5)
+        self._price_history: deque = deque(maxlen=self._vol_window)
+        self._adjusted_spread_val: float = config.spread_pct
 
     async def initialize(self) -> bool:
         """从持久化恢复或创建新的网格。"""
@@ -104,10 +110,11 @@ class GridStrategy:
         if price is None or price <= 0:
             return
         self._current_price = price
+        self._update_volatility(price)
 
         changed = False
 
-        # 价格突破后延伸网格
+        # 价格突破后延伸网格（使用自适应价差）
         await self._extend_if_needed(price)
         changed = changed or self._current_price != price
 
@@ -137,7 +144,8 @@ class GridStrategy:
 
     async def _extend_upward(self, current_price: float, idle: list) -> None:
         """向上延伸：在现有范围上方添加新槽位。"""
-        ratio = 1 + self._config.spread_pct / 100.0
+        spread = self._adjusted_spread()
+        ratio = 1 + spread / 100.0
         sorted_slots = sorted(self._slots, key=lambda s: s.buy_price)
         highest = sorted_slots[-1]
         new_buy = highest.buy_price * ratio
@@ -159,7 +167,8 @@ class GridStrategy:
 
     async def _extend_downward(self, current_price: float, idle: list) -> None:
         """向下延伸：在现有范围下方添加新槽位。"""
-        ratio = 1 + self._config.spread_pct / 100.0
+        spread = self._adjusted_spread()
+        ratio = 1 + spread / 100.0
         sorted_slots = sorted(self._slots, key=lambda s: s.buy_price)
         lowest = sorted_slots[0]
         new_buy = lowest.buy_price / ratio
@@ -178,6 +187,37 @@ class GridStrategy:
         logger.info("[GRID] 向下延伸: slot %d→%d buy=$%.6f sell=$%.6f (当前价 $%.6f, 原最低买入 $%.6f)",
                     old_id, next_id, new_buy, new_sell, current_price,
                     min(s.buy_price for s in self._slots))
+
+    def _update_volatility(self, price: float) -> None:
+        """维护价格窗口，计算波动率并调整网格间距。"""
+        if not self._volatility_adjust:
+            return
+
+        self._price_history.append(price)
+        if len(self._price_history) < 5:
+            return
+
+        prices = list(self._price_history)
+        returns = []
+        for i in range(1, len(prices)):
+            r = math.log(prices[i] / prices[i - 1]) if prices[i - 1] > 0 else 0.0
+            returns.append(r)
+
+        mean_r = sum(returns) / len(returns)
+        variance = sum((r - mean_r) ** 2 for r in returns) / len(returns)
+        vol = math.sqrt(variance)
+
+        # 波动率高 → 放宽价差（减少无效触发）；波动率低 → 收紧价差（增加交易频率）
+        scale = 30.0
+        mult = max(0.5, min(2.0, 1.0 + vol * scale))
+        self._adjusted_spread_val = round(self._config.spread_pct * mult, 4)
+
+        logger.debug("[GRID] vol=%.6f mult=%.2f spread=%.2f%% → %.2f%%",
+                     vol, mult, self._config.spread_pct, self._adjusted_spread_val)
+
+    def _adjusted_spread(self) -> float:
+        """返回当前波动率调整后的 spread_pct。"""
+        return self._adjusted_spread_val if self._volatility_adjust else self._config.spread_pct
 
     async def _get_price(self) -> Optional[float]:
         """通过 OKX 估算代币的 USDC 价格。"""

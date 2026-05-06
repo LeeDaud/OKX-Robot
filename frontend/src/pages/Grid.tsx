@@ -1,13 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchGridState, fetchGridHistory } from "@/lib/api";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchGridState, fetchGridHistory, toggleExecution } from "@/lib/api";
 import type { GridState, GridHistoryResponse } from "@/types/api";
 import { PageHeader, MetricCard, SectionCard, LoadingState, EmptyState } from "@/components/app-primitives";
 import GridVisualizer from "@/components/GridVisualizer";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { tokenDisplayName, formatTime } from "@/lib/tokens";
+import { Power, PowerOff } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Grid() {
+  const qc = useQueryClient();
   const { data: state, isLoading } = useQuery<GridState>({
     queryKey: ["grid-state"],
     queryFn: fetchGridState,
@@ -22,12 +27,22 @@ export default function Grid() {
     staleTime: 30000,
   });
 
+  const toggleVolMut = useMutation({
+    mutationFn: toggleExecution,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["grid-state"] });
+      toast.success("波动率自适应已切换");
+    },
+    onError: (e: Error) => toast.error(`切换失败: ${e.message}`),
+  });
+
   if (isLoading) return <LoadingState label="正在加载网格策略..." />;
   if (!state) return <EmptyState title="网格策略未启动" description="后端网格策略尚未初始化，请检查配置。如需帮助，请联系开发人员。" />;
 
   const trades = history?.trades ?? [];
   const tokenSymbol = state.token_symbol || tokenDisplayName(state.token);
   const activeSlots = state.slots.filter((s) => s.status === "bought").length;
+  const volEnabled = state.volatility_adjust;
 
   return (
     <div className="space-y-6">
@@ -36,6 +51,41 @@ export default function Grid() {
         title="网格策略"
         description="价格网格自动低买高卖，震荡市持续套利"
       />
+
+      {/* ── 波动率自适应控制 ── */}
+      <section>
+        <div className="mb-4 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border/40" />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/60">
+            波动率自适应
+          </span>
+          <div className="h-px flex-1 bg-border/40" />
+        </div>
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">根据市场波动率自动调整网格间距</p>
+                <p className="text-xs text-muted-foreground">
+                  {volEnabled
+                    ? "高波动时放宽价差（减少无效触发），低波动时收紧价差（增加交易频率）"
+                    : "关闭后使用固定价差（config.yaml 中 spread_pct）"}
+                </p>
+              </div>
+              <Button
+                variant={volEnabled ? "default" : "outline"}
+                size="sm"
+                disabled={toggleVolMut.isPending}
+                onClick={() => toggleVolMut.mutate({ grid_volatility_adjust: !volEnabled })}
+                className="shrink-0"
+              >
+                {volEnabled ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                {volEnabled ? "已开启" : "已关闭"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label="总投入" value={`$${state.total_investment.toFixed(2)}`} hint={`${state.total_slots} 个网格位`} />

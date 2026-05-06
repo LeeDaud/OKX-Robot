@@ -55,7 +55,7 @@ export function updateParams(params: Record<string, unknown>): Promise<{ ok: boo
   })
 }
 
-export function toggleExecution(data: { copy_trading_enabled?: boolean; grid_enabled?: boolean; dry_run?: boolean }): Promise<{ ok: boolean; updated: string[] }> {
+export function toggleExecution(data: { copy_trading_enabled?: boolean; grid_enabled?: boolean; grid_volatility_adjust?: boolean; dry_run?: boolean }): Promise<{ ok: boolean; updated: string[] }> {
   return request('/config/toggle', {
     method: 'POST',
     body: JSON.stringify(data),

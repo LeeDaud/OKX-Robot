@@ -153,6 +153,7 @@ async def handle_grid_state(request: web.Request) -> web.Response:
         "realized_pnl": round(realized_pnl, 4),
         "unrealized_pnl": round(unrealized_pnl, 4),
         "total_pnl": round(realized_pnl + unrealized_pnl, 4),
+        "volatility_adjust": grid_config.get("volatility_adjust", False),
         "slots": slots,
         "updated_at": state.get("_updated_at", ""),
     })
@@ -451,6 +452,13 @@ async def handle_toggle_execution(request: web.Request):
         cfg["grid"]["enabled"] = bool(data["grid_enabled"])
         updated.append("grid_enabled")
 
+    # 切换 grid.volatility_adjust
+    if "grid_volatility_adjust" in data:
+        if "grid" not in cfg:
+            cfg["grid"] = {}
+        cfg["grid"]["volatility_adjust"] = bool(data["grid_volatility_adjust"])
+        updated.append("grid_volatility_adjust")
+
     # 切换 dry_run
     if "dry_run" in data:
         cfg["dry_run"] = bool(data["dry_run"])
@@ -730,6 +738,7 @@ def _load_grid_cfg() -> dict:
             "enabled": bool(g.get("enabled", False)),
             "token": str(g.get("token", "")),
             "investment_usdc": float(g.get("investment_usdc", 0)),
+            "volatility_adjust": bool(g.get("volatility_adjust", False)),
         }
     except Exception:
         return {}

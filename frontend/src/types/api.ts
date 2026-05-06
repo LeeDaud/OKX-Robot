@@ -173,6 +173,7 @@ export interface GridState {
   realized_pnl: number
   unrealized_pnl: number
   total_pnl: number
+  volatility_adjust: boolean
   slots: GridSlotData[]
   updated_at: string
 }

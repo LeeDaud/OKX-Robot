@@ -13,7 +13,7 @@ import Grid from "@/pages/Grid";
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { refetchInterval: 10000, staleTime: 5000, retry: 1 },
+    queries: { refetchInterval: 30000, staleTime: 15000, retry: 1 },
   },
 });
 

@@ -316,6 +316,64 @@ async def handle_balances(_request):
     })
 
 
+async def handle_get_wallet(_request):
+    """GET /api/config/wallet - 返回钱包信息"""
+    cfg = _load_full_config()
+    return json_ok({
+        "wallet_address": cfg["wallet_address"],
+        "rpc_http_url": cfg["rpc_http_url"],
+        "rpc_ws_url": cfg["rpc_ws_url"],
+        "has_private_key": cfg["has_private_key"],
+        "has_okx_api_key": cfg["has_okx_api_key"],
+    })
+
+
+async def handle_update_wallet(request: web.Request):
+    """PUT /api/config/wallet - 更新钱包配置"""
+    try:
+        data = await request.json()
+    except Exception:
+        return json_error("Invalid JSON", 400)
+
+    from dotenv import load_dotenv, set_key
+    import yaml
+
+    load_dotenv()
+    env_file = Path(".env")
+    updated = []
+
+    # 更新 .env 文件中的字段
+    if "wallet_address" in data and data["wallet_address"]:
+        set_key(env_file, "WALLET_ADDRESS", data["wallet_address"])
+        updated.append("wallet_address")
+
+    if "rpc_http_url" in data and data["rpc_http_url"]:
+        set_key(env_file, "RPC_HTTP_URL", data["rpc_http_url"])
+        updated.append("rpc_http_url")
+
+    if "rpc_ws_url" in data and data["rpc_ws_url"]:
+        set_key(env_file, "RPC_WS_URL", data["rpc_ws_url"])
+        updated.append("rpc_ws_url")
+
+    if "private_key" in data and data["private_key"]:
+        set_key(env_file, "PRIVATE_KEY", data["private_key"])
+        updated.append("private_key")
+
+    if "okx_api_key" in data and data["okx_api_key"]:
+        set_key(env_file, "OKX_API_KEY", data["okx_api_key"])
+        updated.append("okx_api_key")
+
+    if "okx_secret_key" in data and data["okx_secret_key"]:
+        set_key(env_file, "OKX_SECRET_KEY", data["okx_secret_key"])
+        updated.append("okx_secret_key")
+
+    if "okx_passphrase" in data and data["okx_passphrase"]:
+        set_key(env_file, "OKX_PASSPHRASE", data["okx_passphrase"])
+        updated.append("okx_passphrase")
+
+    return json_ok({"ok": True, "updated": updated})
+
+
 # ── 启动 ────────────────────────────────────────────────────
 
 
@@ -455,6 +513,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/trades/stats", handle_stats)
     app.router.add_get("/api/trades", handle_trades)
     app.router.add_get("/api/config/balances", handle_balances)
+    app.router.add_get("/api/config/wallet", handle_get_wallet)
+    app.router.add_put("/api/config/wallet", handle_update_wallet)
 
     # CORS preflight
     app.router.add_route("OPTIONS", "/api/{tail:.*}", _cors_preflight)

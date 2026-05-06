@@ -153,7 +153,7 @@ async def handle_grid_state(request: web.Request) -> web.Response:
         "realized_pnl": round(realized_pnl, 4),
         "unrealized_pnl": round(unrealized_pnl, 4),
         "total_pnl": round(realized_pnl + unrealized_pnl, 4),
-        "volatility_adjust": grid_config.get("volatility_adjust", False),
+        "volatility_adjust": _load_grid_cfg().get("volatility_adjust", False),
         "slots": slots,
         "updated_at": state.get("_updated_at", ""),
     })

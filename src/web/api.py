@@ -780,6 +780,7 @@ def _load_full_config() -> dict:
     copy_raw = raw.get("copy_trading", {}) or {}
     targets_raw = copy_raw.get("targets", []) or []
     grid_raw = raw.get("grid", {}) or {}
+    aero_raw = raw.get("aero_trend", {}) or {}
 
     return {
         "base_token": str(raw.get("base_token", "VIRTUAL")).upper(),
@@ -863,7 +864,19 @@ async def handle_aero_state(_request):
     raw_pos = state.get("aero_position", {})
     consecutive = int(state.get("aero_consecutive_losses", 0))
 
+    # 读取 enabled 状态
+    enabled = False
+    try:
+        import yaml
+        with open("config.yaml", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        aero_raw = raw.get("aero_trend", {}) or {}
+        enabled = bool(aero_raw.get("enabled", False))
+    except Exception:
+        pass
+
     return json_ok({
+        "enabled": enabled,
         "has_position": raw_pos.get("has_position", False),
         "entry_price": raw_pos.get("entry_price", 0),
         "current_price": raw_pos.get("current_price", 0),

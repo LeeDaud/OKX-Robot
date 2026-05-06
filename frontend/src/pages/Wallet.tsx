@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Eye, EyeOff, Pencil } from "lucide-react";
-import { fetchWallet, fetchConfig, updateWallet, fetchGridState } from "@/lib/api";
-import type { WalletInfo, AppConfig, GridState } from "@/types/api";
+import { fetchWallet, fetchConfig, updateWallet, fetchGridState, fetchAeroState } from "@/lib/api";
+import type { WalletInfo, AppConfig, GridState, AeroState } from "@/types/api";
 import { PageHeader, SectionCard, LoadingState, StatusBadge } from "@/components/app-primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,11 @@ export default function WalletPage() {
   const { data: gridState } = useQuery<GridState>({
     queryKey: ["grid-state"],
     queryFn: fetchGridState,
+    staleTime: 2 * 60 * 1000,
+  });
+  const { data: aeroState } = useQuery<AeroState>({
+    queryKey: ["aero-state"],
+    queryFn: fetchAeroState,
     staleTime: 2 * 60 * 1000,
   });
 
@@ -84,6 +89,7 @@ export default function WalletPage() {
 
   const copyEnabled = (config?.copy_targets?.length ?? 0) > 0;
   const gridEnabled = gridState?.enabled ?? false;
+  const aeroEnabled = aeroState?.enabled ?? false;
 
   return (
     <div className="space-y-6">
@@ -142,6 +148,13 @@ export default function WalletPage() {
                 <span className="text-sm font-medium">{gridEnabled ? "运行中" : "未启用"}</span>
               </div>
             </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">AERO 趋势</span>
+              <div className="flex items-center gap-2">
+                <span className={cn("size-2 rounded-full", aeroEnabled ? "bg-[color:var(--success)]" : "bg-muted-foreground/40")} />
+                <span className="text-sm font-medium">{aeroEnabled ? "运行中" : "未启用"}</span>
+              </div>
+            </div>
             {copyEnabled && (
               <div className="pt-2 text-xs text-muted-foreground">
                 跟单目标: <strong>{config?.copy_targets?.length ?? 0}</strong> 个钱包
@@ -150,6 +163,13 @@ export default function WalletPage() {
             {gridEnabled && (
               <div className="pt-2 text-xs text-muted-foreground">
                 网格代币: <strong>{gridState?.token_symbol || "-"}</strong>
+              </div>
+            )}
+            {aeroEnabled && (
+              <div className="pt-2 text-xs text-muted-foreground">
+                {aeroState?.has_position
+                  ? `持仓中 · PnL ${(aeroState.pnl_pct * 100).toFixed(1)}% · ${aeroState.holding_time_minutes}min`
+                  : "等待买入信号"}
               </div>
             )}
           </div>

@@ -106,6 +106,7 @@ export type StrategyFilter = 'all' | 'copy' | 'grid' | 'dca' | 'buyback' | 'aero
 // ── AERO 趋势策略类型 ────────────────────────────────────
 
 export interface AeroState {
+  enabled: boolean
   has_position: boolean
   entry_price: number
   current_price: number

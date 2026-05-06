@@ -374,6 +374,52 @@ async def handle_update_wallet(request: web.Request):
     return json_ok({"ok": True, "updated": updated})
 
 
+async def handle_toggle_execution(request: web.Request):
+    """POST /api/config/toggle - 切换执行开关（copy_trading.enabled, grid.enabled, dry_run）"""
+    try:
+        data = await request.json()
+    except Exception:
+        return json_error("Invalid JSON", 400)
+
+    import yaml
+    config_file = Path("config.yaml")
+
+    try:
+        with open(config_file, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        return json_error(f"Failed to read config: {e}", 500)
+
+    updated = []
+
+    # 切换 copy_trading.enabled
+    if "copy_trading_enabled" in data:
+        if "copy_trading" not in cfg:
+            cfg["copy_trading"] = {}
+        cfg["copy_trading"]["enabled"] = bool(data["copy_trading_enabled"])
+        updated.append("copy_trading_enabled")
+
+    # 切换 grid.enabled
+    if "grid_enabled" in data:
+        if "grid" not in cfg:
+            cfg["grid"] = {}
+        cfg["grid"]["enabled"] = bool(data["grid_enabled"])
+        updated.append("grid_enabled")
+
+    # 切换 dry_run
+    if "dry_run" in data:
+        cfg["dry_run"] = bool(data["dry_run"])
+        updated.append("dry_run")
+
+    try:
+        with open(config_file, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    except Exception as e:
+        return json_error(f"Failed to write config: {e}", 500)
+
+    return json_ok({"ok": True, "updated": updated})
+
+
 # ── 启动 ────────────────────────────────────────────────────
 
 
@@ -515,6 +561,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/config/balances", handle_balances)
     app.router.add_get("/api/config/wallet", handle_get_wallet)
     app.router.add_put("/api/config/wallet", handle_update_wallet)
+    app.router.add_post("/api/config/toggle", handle_toggle_execution)
 
     # CORS preflight
     app.router.add_route("OPTIONS", "/api/{tail:.*}", _cors_preflight)

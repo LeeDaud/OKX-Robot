@@ -95,11 +95,11 @@ export default function WalletPage() {
             </div>
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">RPC HTTP</div>
-              <div className="mt-1 text-sm text-muted-foreground break-all">{wallet?.rpc_http_url || "-"}</div>
+              <div className="mt-1 text-sm text-muted-foreground">{wallet?.rpc_http_url ? "已配置" : "未配置"}</div>
             </div>
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">RPC WS</div>
-              <div className="mt-1 text-sm text-muted-foreground break-all">{(wallet as any)?.rpc_ws_url || "-"}</div>
+              <div className="mt-1 text-sm text-muted-foreground">{(wallet as any)?.rpc_ws_url ? "已配置" : "未配置"}</div>
             </div>
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">运行模式</div>

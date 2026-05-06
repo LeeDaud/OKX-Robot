@@ -55,6 +55,13 @@ export function updateParams(params: Record<string, unknown>): Promise<{ ok: boo
   })
 }
 
+export function toggleExecution(data: { copy_trading_enabled?: boolean; grid_enabled?: boolean; dry_run?: boolean }): Promise<{ ok: boolean; updated: string[] }> {
+  return request('/config/toggle', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
 // Trades
 export function fetchTrades(limit = 50, offset = 0, strategy: StrategyFilter = 'all'): Promise<{ trades: TradeRecord[] }> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })

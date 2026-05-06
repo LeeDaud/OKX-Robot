@@ -29,7 +29,6 @@ export default function Params() {
         take_profit_check_sec: config.take_profit_check_sec,
         poll_interval_sec: config.poll_interval_sec,
         min_trade_usd: config.min_trade_usd,
-        dry_run: config.dry_run,
       });
     }
   }, [config]);
@@ -102,12 +101,6 @@ export default function Params() {
           </Field>
           <Field label="最小跟单额 (USDC)">
             <Input type="number" value={form.min_trade_usd ?? ""} onChange={setNum("min_trade_usd")} />
-          </Field>
-          <Field label="Dry Run">
-            <Select value={String(form.dry_run)} onChange={(e) => setForm({ ...form, dry_run: e.target.value === "true" })}>
-              <option value="false">false（实盘）</option>
-              <option value="true">true（模拟）</option>
-            </Select>
           </Field>
         </div>
         <div className="mt-6 flex items-center gap-3">

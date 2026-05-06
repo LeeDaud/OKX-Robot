@@ -1,17 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { fetchConfig, fetchTradeStats, fetchPositions, fetchBalances, fetchGridState, fetchWallet as fetchWalletApi } from "@/lib/api";
+import { fetchConfig, fetchTradeStats, fetchPositions, fetchBalances, fetchGridState, fetchWallet as fetchWalletApi, toggleExecution } from "@/lib/api";
 import type { AppConfig, TradeStats, BalancesResponse, GridState, WalletInfo } from "@/types/api";
 import { PageHeader, MetricCard, SectionCard, LoadingState } from "@/components/app-primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
-import { Settings2 } from "lucide-react";
+import { Settings2, Power, PowerOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { shortenAddress } from "@/lib/tokens";
+import { toast } from "sonner";
 
 export default function Dashboard() {
+  const qc = useQueryClient();
   const { data: config, isLoading } = useQuery<AppConfig>({ queryKey: ["config"], queryFn: fetchConfig });
   const { data: stats } = useQuery<TradeStats>({ queryKey: ["stats"], queryFn: fetchTradeStats });
   const { data: positions } = useQuery({ queryKey: ["positions"], queryFn: fetchPositions });
@@ -29,12 +31,80 @@ export default function Dashboard() {
 
   const gridEnabled = gridState?.enabled ?? false;
   const gridActiveSlots = gridState?.slots?.filter((s) => s.status === "bought").length ?? 0;
-  const copyEnabled = (config?.copy_targets?.length ?? 0) > 0;
+  const copyEnabled = config?.copy_trading?.enabled ?? false;
   const isWalletReady = wallet?.has_private_key && wallet?.has_okx_api_key;
+
+  const toggleMut = useMutation({
+    mutationFn: toggleExecution,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["config"] });
+      qc.invalidateQueries({ queryKey: ["grid-state"] });
+      toast.success("配置已更新");
+    },
+    onError: (e: Error) => toast.error(`更新失败: ${e.message}`),
+  });
 
   return (
     <div className="space-y-8">
       <PageHeader eyebrow="overview" title="运营概览" description="钱包、跟单与策略运行状态总览" />
+
+      {/* ── 执行控制 ── */}
+      <section>
+        <div className="mb-4 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border/40" />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/60">
+            执行控制
+          </span>
+          <div className="h-px flex-1 bg-border/40" />
+        </div>
+        <Card>
+          <CardContent className="p-5">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">跟单交易</span>
+                <Button
+                  variant={copyEnabled ? "default" : "outline"}
+                  size="sm"
+                  disabled={toggleMut.isPending}
+                  onClick={() => toggleMut.mutate({ copy_trading_enabled: !copyEnabled })}
+                  className="justify-start"
+                >
+                  {copyEnabled ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                  {copyEnabled ? "运行中" : "已停止"}
+                </Button>
+              </div>
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">网格策略</span>
+                <Button
+                  variant={gridEnabled ? "default" : "outline"}
+                  size="sm"
+                  disabled={toggleMut.isPending}
+                  onClick={() => toggleMut.mutate({ grid_enabled: !gridEnabled })}
+                  className="justify-start"
+                >
+                  {gridEnabled ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                  {gridEnabled ? "运行中" : "已停止"}
+                </Button>
+              </div>
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">运行模式</span>
+                <Button
+                  variant={config?.dry_run ? "outline" : "default"}
+                  size="sm"
+                  disabled={toggleMut.isPending}
+                  onClick={() => toggleMut.mutate({ dry_run: !config?.dry_run })}
+                  className="justify-start"
+                >
+                  <Badge variant={config?.dry_run ? "warning" : "success"} className="mr-2">
+                    {config?.dry_run ? "Dry Run" : "Live"}
+                  </Badge>
+                  {config?.dry_run ? "切换至实盘" : "切换至模拟"}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
 
       {/* ── 钱包状态 ── */}
       <section>

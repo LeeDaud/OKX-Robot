@@ -19,15 +19,36 @@ import { Card } from "@/components/ui/card";
 import { Sheet, SheetContent } from "@/components/ui/dialog";
 import { useTheme } from "@/components/theme-provider";
 import { useQueryClient } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
 
-const navItems = [
-  { to: "/", label: "运营概览", icon: LayoutDashboard },
-  { to: "/wallets", label: "跟单钱包", icon: Wallet },
-  { to: "/params", label: "跟单参数", icon: SlidersHorizontal },
-  { to: "/wallet", label: "执行钱包", icon: UserCircle },
-  { to: "/grid", label: "网格策略", icon: Grid3x3 },
-  { to: "/positions", label: "实时持仓", icon: Package },
-  { to: "/trades", label: "交易记录", icon: History },
+const navGroups = [
+  {
+    label: "总览",
+    items: [
+      { to: "/", label: "运营概览", icon: LayoutDashboard },
+    ],
+  },
+  {
+    label: "跟单",
+    items: [
+      { to: "/wallets", label: "跟单钱包", icon: Wallet },
+      { to: "/params", label: "跟单参数", icon: SlidersHorizontal },
+      { to: "/wallet", label: "执行钱包", icon: UserCircle },
+      { to: "/positions", label: "实时持仓", icon: Package },
+    ],
+  },
+  {
+    label: "策略",
+    items: [
+      { to: "/grid", label: "网格策略", icon: Grid3x3 },
+    ],
+  },
+  {
+    label: "记录",
+    items: [
+      { to: "/trades", label: "交易记录", icon: History },
+    ],
+  },
 ];
 
 function BrandBlock({ compact = false }: { compact?: boolean }) {
@@ -48,33 +69,42 @@ function BrandBlock({ compact = false }: { compact?: boolean }) {
 
 function NavList({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {
   return (
-    <div className="space-y-2">
-      {navItems.map((item) => {
-        const Icon = item.icon;
-        return (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === "/"}
-            title={item.label}
-            onClick={onNavigate}
-            className={({ isActive }) =>
-              `group flex items-center rounded-[22px] text-sm font-medium transition ${
-                compact ? "justify-center px-3 py-3" : "justify-between px-4 py-3"
-              } ${
-                isActive
-                  ? "bg-[color:var(--surface-soft-strong)] text-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-[color:var(--surface-soft)] hover:text-foreground"
-              }`
-            }
-          >
-            <span className={`flex items-center gap-3 ${compact ? "justify-center" : ""}`}>
-              <Icon className="size-4 shrink-0" />
-              {compact ? null : item.label}
-            </span>
-          </NavLink>
-        );
-      })}
+    <div className="space-y-5">
+      {navGroups.map((group) => (
+        <div key={group.label} className="space-y-1">
+          {compact ? null : (
+            <div className="px-4 pb-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/60">
+              {group.label}
+            </div>
+          )}
+          {group.items.map((item) => {
+            const Icon = item.icon;
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === "/"}
+                title={item.label}
+                onClick={onNavigate}
+                className={({ isActive }) =>
+                  `group flex items-center rounded-[22px] text-sm font-medium transition ${
+                    compact ? "justify-center px-3 py-3" : "justify-between px-4 py-3"
+                  } ${
+                    isActive
+                      ? "bg-[color:var(--surface-soft-strong)] text-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-[color:var(--surface-soft)] hover:text-foreground"
+                  }`
+                }
+              >
+                <span className={cn("flex items-center gap-3", compact && "justify-center")}>
+                  <Icon className="size-4 shrink-0" />
+                  {compact ? null : item.label}
+                </span>
+              </NavLink>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }

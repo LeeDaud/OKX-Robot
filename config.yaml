@@ -20,10 +20,10 @@ deep_buy:
 # 网格交易：在价格网格不同价位自动低买高卖，循环套利
 grid:
   enabled: true
-  token: "0xc2bceb0ee69455da32abb10a5ba81c0299a925c8"
-  levels: 6              # 网格位数量
-  spread_pct: 2.0        # 相邻位间距（%）
-  investment_usdc: 60    # 总投入（均分到每个位）
+  token: "0x940181a94a35a4569e4529a3cdfb74e38fd98631"  # AERO
+  levels: 4              # 网格位数量
+  spread_pct: 3.0        # 相邻位间距（%）
+  investment_usdc: 8     # 总投入（均分到每个位）
   profit_pct: 3.0        # 每个位的目标利润率
 
 # 回购地址簿：回购地址买入指定代币时，立即卖出对应持仓

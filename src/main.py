@@ -559,6 +559,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                         continue
 
                     aero_pos_mgr.position.update_price(snap.price)
+                    aero_pos_mgr.save()  # 定期持久化让 API 读取最新状态
                     can, reason = aero_pos_mgr.can_trade()
 
                     if aero_pos_mgr.position.has_position:

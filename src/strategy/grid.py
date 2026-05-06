@@ -112,21 +112,21 @@ class GridStrategy:
         self._current_price = price
         self._update_volatility(price)
 
-        changed = False
-
-        # 价格突破后延伸网格（使用自适应价差）
         await self._extend_if_needed(price)
-        changed = changed or self._current_price != price
 
         for slot in self._slots:
             if slot.status == "idle" and price <= slot.buy_price:
                 await self._buy(slot)
-                changed = True
             elif slot.status == "bought" and price >= slot.sell_price:
                 await self._sell(slot)
-                changed = True
 
         self._save_state()
+
+        # 每轮输出 slots 概况用于排查
+        idle_count = sum(1 for s in self._slots if s.status == "idle")
+        bought_count = sum(1 for s in self._slots if s.status == "bought")
+        logger.debug("[GRID] tick: price=$%.6f slots=%d (idle=%d bought=%d)",
+                     price, len(self._slots), idle_count, bought_count)
 
     async def _extend_if_needed(self, current_price: float) -> None:
         """价格突破现有网格范围时自动延伸。"""
@@ -220,12 +220,17 @@ class GridStrategy:
         return self._adjusted_spread_val if self._volatility_adjust else self._config.spread_pct
 
     async def _get_price(self) -> Optional[float]:
-        """通过 OKX 估算代币的 USDC 价格。"""
+        """通过 OKX 估算代币的 USDC 价格，失败时使用缓存价格。"""
         quote = await self._okx.get_quote(USDC_BASE, self._token, int(0.1 * 1e6))
         if quote is None:
+            if self._current_price > 0:
+                logger.debug("[GRID] 价格获取失败，使用缓存 $%.6f", self._current_price)
+                return self._current_price
             return None
         to_amount = float(quote.get("toTokenAmount", "0"))
         if to_amount <= 0:
+            if self._current_price > 0:
+                return self._current_price
             return None
         to_decimals = int((quote.get("toToken") or {}).get("decimals", 18))
         token_amount = to_amount / (10 ** to_decimals)

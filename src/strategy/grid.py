@@ -50,6 +50,7 @@ class GridStrategy:
         self._slots: list[GridSlot] = []
         self._current_price: float = 0.0
         self._initialized = False
+        self._max_slots: int = getattr(config, "max_slots", 12)
 
     async def initialize(self) -> bool:
         """从持久化恢复或创建新的网格。"""
@@ -79,10 +80,12 @@ class GridStrategy:
         return True
 
     def _build_slots(self, current_price: float) -> list[GridSlot]:
+        """几何间距网格：价格越下跌，买入线越密集。"""
         per_slot = self._config.investment_usdc / max(self._config.levels, 1)
+        ratio = 1 + self._config.spread_pct / 100.0
         slots = []
         for i in range(self._config.levels):
-            buy_price = current_price * (1 - self._config.spread_pct / 100.0 * (i + 1))
+            buy_price = current_price / (ratio ** (i + 1))
             sell_price = buy_price * (1 + self._config.profit_pct / 100.0)
             slots.append(GridSlot(
                 slot_id=i,
@@ -103,6 +106,11 @@ class GridStrategy:
         self._current_price = price
 
         changed = False
+
+        # 价格突破后延伸网格
+        await self._extend_if_needed(price)
+        changed = changed or self._current_price != price
+
         for slot in self._slots:
             if slot.status == "idle" and price <= slot.buy_price:
                 await self._buy(slot)
@@ -112,6 +120,64 @@ class GridStrategy:
                 changed = True
 
         self._save_state()
+
+    async def _extend_if_needed(self, current_price: float) -> None:
+        """价格突破现有网格范围时自动延伸。"""
+        if not self._slots:
+            return
+
+        max_sell = max(s.sell_price for s in self._slots)
+        min_buy = min(s.buy_price for s in self._slots)
+        idle_slots = [s for s in self._slots if s.status == "idle"]
+
+        if current_price > max_sell and idle_slots and len(self._slots) < self._max_slots:
+            await self._extend_upward(current_price, idle_slots)
+        elif current_price < min_buy and idle_slots and len(self._slots) < self._max_slots:
+            await self._extend_downward(current_price, idle_slots)
+
+    async def _extend_upward(self, current_price: float, idle: list) -> None:
+        """向上延伸：在现有范围上方添加新槽位。"""
+        ratio = 1 + self._config.spread_pct / 100.0
+        sorted_slots = sorted(self._slots, key=lambda s: s.buy_price)
+        highest = sorted_slots[-1]
+        new_buy = highest.buy_price * ratio
+        new_sell = new_buy * (1 + self._config.profit_pct / 100.0)
+
+        slot = idle[0]
+        next_id = max(s.slot_id for s in self._slots) + 1
+        old_id = slot.slot_id
+
+        slot.slot_id = next_id
+        slot.buy_price = round(new_buy, 12)
+        slot.sell_price = round(new_sell, 12)
+        slot.buy_tx = ""
+        slot.filled_amount = 0
+
+        logger.info("[GRID] 向上延伸: slot %d→%d buy=$%.6f sell=$%.6f (当前价 $%.6f, 原最高卖出 $%.6f)",
+                    old_id, next_id, new_buy, new_sell, current_price,
+                    max(s.sell_price for s in self._slots))
+
+    async def _extend_downward(self, current_price: float, idle: list) -> None:
+        """向下延伸：在现有范围下方添加新槽位。"""
+        ratio = 1 + self._config.spread_pct / 100.0
+        sorted_slots = sorted(self._slots, key=lambda s: s.buy_price)
+        lowest = sorted_slots[0]
+        new_buy = lowest.buy_price / ratio
+        new_sell = new_buy * (1 + self._config.profit_pct / 100.0)
+
+        slot = idle[0]
+        next_id = max(s.slot_id for s in self._slots) + 1
+        old_id = slot.slot_id
+
+        slot.slot_id = next_id
+        slot.buy_price = round(max(new_buy, 0.000001), 12)
+        slot.sell_price = round(new_sell, 12)
+        slot.buy_tx = ""
+        slot.filled_amount = 0
+
+        logger.info("[GRID] 向下延伸: slot %d→%d buy=$%.6f sell=$%.6f (当前价 $%.6f, 原最低买入 $%.6f)",
+                    old_id, next_id, new_buy, new_sell, current_price,
+                    min(s.buy_price for s in self._slots))
 
     async def _get_price(self) -> Optional[float]:
         """通过 OKX 估算代币的 USDC 价格。"""

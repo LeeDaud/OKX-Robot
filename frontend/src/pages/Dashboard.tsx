@@ -49,6 +49,16 @@ export default function Dashboard() {
     staleTime: 2 * 60 * 1000,
   });
 
+  const toggleMut = useMutation({
+    mutationFn: toggleExecution,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["config"] });
+      qc.invalidateQueries({ queryKey: ["grid-state"] });
+      toast.success("配置已更新");
+    },
+    onError: (e: Error) => toast.error(`更新失败: ${e.message}`),
+  });
+
   if (isLoading) return <LoadingState label="正在加载概览..." />;
 
   const openCount = stats?.today?.total ?? 0;
@@ -61,16 +71,6 @@ export default function Dashboard() {
   const gridActiveSlots = gridState?.slots?.filter((s) => s.status === "bought").length ?? 0;
   const copyEnabled = config?.copy_trading?.enabled ?? false;
   const isWalletReady = wallet?.has_private_key && wallet?.has_okx_api_key;
-
-  const toggleMut = useMutation({
-    mutationFn: toggleExecution,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["config"] });
-      qc.invalidateQueries({ queryKey: ["grid-state"] });
-      toast.success("配置已更新");
-    },
-    onError: (e: Error) => toast.error(`更新失败: ${e.message}`),
-  });
 
   return (
     <div className="space-y-8">
@@ -161,14 +161,6 @@ export default function Dashboard() {
                   <span>OKX API: <strong className={wallet?.has_okx_api_key ? "text-[color:var(--success)]" : "text-[color:var(--danger)]"}>{wallet?.has_okx_api_key ? "已配置" : "未配置"}</strong></span>
                   <span>基础代币: <strong>{baseToken}</strong></span>
                 </div>
-                <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                  {baseBalance != null && (
-                    <span>{baseToken} 余额: <strong>${baseBalance.toFixed(4)}</strong></span>
-                  )}
-                  {ethBalance != null && (
-                    <span>ETH 余额: <strong>{ethBalance.toFixed(4)}</strong></span>
-                  )}
-                </div>
               </div>
               {/* 右侧：状态指示 + 编辑按钮 */}
               <div className="flex flex-wrap items-center gap-3">
@@ -192,6 +184,52 @@ export default function Dashboard() {
                 </Button>
               </div>
             </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ── 资金持仓 ── */}
+      <section>
+        <div className="mb-4 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border/40" />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/60">
+            资金持仓
+          </span>
+          <div className="h-px flex-1 bg-border/40" />
+        </div>
+        <Card>
+          <CardContent className="p-5">
+            {balanceData?.balances && Object.keys(balanceData.balances).length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>代币</TableHead>
+                    <TableHead>余额</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Object.entries(balanceData.balances).map(([token, bal]) => (
+                    <TableRow key={token}>
+                      <TableCell className="font-semibold">{token}</TableCell>
+                      <TableCell className="font-mono text-sm tabular-nums">
+                        {bal != null ? (
+                          <span className={token === "ETH" && Number(bal) < 0.001 ? "text-[color:var(--danger)]" : ""}>
+                            {Number(bal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">查询失败</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="text-sm text-muted-foreground">余额数据不可用</p>
+            )}
+            {balanceData?.error && (
+              <p className="mt-2 text-xs text-[color:var(--danger)]">{balanceData.error}</p>
+            )}
           </CardContent>
         </Card>
       </section>

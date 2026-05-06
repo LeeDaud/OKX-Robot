@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Shell from "@/components/Shell";
 import Dashboard from "@/pages/Dashboard";
 import Wallets from "@/pages/Wallets";
@@ -26,6 +27,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        <ErrorBoundary>
         <BrowserRouter>
           <Routes>
             <Route element={<Shell />}>
@@ -57,6 +59,7 @@ export default function App() {
             },
           }}
         />
+        </ErrorBoundary>
       </ThemeProvider>
     </QueryClientProvider>
   );

@@ -145,6 +145,7 @@ export interface BalancesResponse {
   balances: Record<string, number | null>
   base_token: string
   wallet_address: string
+  error?: string
 }
 
 // ── Grid 策略类型 ─────────────────────────────────────────

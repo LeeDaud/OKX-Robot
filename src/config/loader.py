@@ -38,6 +38,7 @@ class GridConfig:
     spread_pct: float = 2.0
     investment_usdc: float = 60.0
     profit_pct: float = 3.0
+    max_slots: int = 12
 
 
 @dataclass
@@ -104,6 +105,7 @@ def _parse_grid(raw: dict | None) -> GridConfig:
         spread_pct=float(raw.get("spread_pct", 2.0)),
         investment_usdc=float(raw.get("investment_usdc", 60)),
         profit_pct=float(raw.get("profit_pct", 3.0)),
+        max_slots=int(raw.get("max_slots", 12)),
     )
 
 

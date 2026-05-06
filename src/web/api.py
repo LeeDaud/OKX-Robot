@@ -308,11 +308,54 @@ async def handle_trades(request: web.Request) -> web.Response:
     return json_ok({"trades": trades})
 
 
-async def handle_balances(_request):
+async def handle_balances(request: web.Request):
+    """查询钱包真实余额（ETH + 已知代币）。"""
+    from web3 import AsyncWeb3
+    from src.executor.trader import ERC20_BALANCE_ABI
+
+    wallet = os.environ.get("WALLET_ADDRESS", "")
+    rpc_url = os.environ.get("RPC_HTTP_URL", "") or os.environ.get("RPC_HTTP_URL_FALLBACK", "")
+    if not wallet or not rpc_url:
+        return json_ok({"balances": {}, "base_token": "USDC", "wallet_address": wallet,
+                        "error": "WALLET_ADDRESS or RPC_HTTP_URL not configured"})
+
+    known_tokens = {
+        "ETH":   {"address": None, "decimals": 18},
+        "USDC":  {"address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "decimals": 6},
+        "VIRTUAL": {"address": "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b", "decimals": 18},
+        "AERO":  {"address": "0x940181a94a35a4569e4529a3cdfb74e38fd98631", "decimals": 18},
+    }
+
+    try:
+        w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(rpc_url, request_kwargs={"timeout": 10}))
+        checksum = AsyncWeb3.to_checksum_address(wallet)
+    except Exception as e:
+        logger.warning("Web3 init failed: %s", e)
+        return json_ok({"balances": {}, "base_token": "USDC", "wallet_address": wallet,
+                        "error": f"RPC init failed: {e}"})
+
+    result = {}
+    for name, info in known_tokens.items():
+        try:
+            if info["address"] is None:
+                # ETH — native balance
+                raw = await w3.eth.get_balance(checksum)
+                result[name] = round(raw / (10 ** info["decimals"]), 6)
+            else:
+                contract = w3.eth.contract(
+                    address=AsyncWeb3.to_checksum_address(info["address"]),
+                    abi=ERC20_BALANCE_ABI,
+                )
+                raw = await contract.functions.balanceOf(checksum).call()
+                result[name] = round(raw / (10 ** info["decimals"]), 6)
+        except Exception as e:
+            logger.warning("Fetch %s balance failed: %s", name, e)
+            result[name] = None
+
     return json_ok({
-        "balances": {"USDC": None, "ETH": None, "AERO": None},
+        "balances": result,
         "base_token": "USDC",
-        "wallet_address": os.environ.get("WALLET_ADDRESS", ""),
+        "wallet_address": wallet,
     })
 
 
@@ -418,6 +461,257 @@ async def handle_toggle_execution(request: web.Request):
         return json_error(f"Failed to write config: {e}", 500)
 
     return json_ok({"ok": True, "updated": updated})
+
+
+# ── 跟单目标 CRUD ─────────────────────────────────────────
+
+
+async def handle_add_target(request: web.Request):
+    """POST /api/config/targets - 添加跟单目标"""
+    try:
+        data = await request.json()
+    except Exception:
+        return json_error("Invalid JSON", 400)
+
+    address = (data.get("address") or "").strip().lower()
+    if not address:
+        return json_error("address is required", 400)
+
+    import yaml
+    config_file = Path("config.yaml")
+    try:
+        with open(config_file, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        return json_error(f"Failed to read config: {e}", 500)
+
+    ct = cfg.setdefault("copy_trading", {})
+    targets = ct.setdefault("targets", [])
+
+    if any(t.get("address", "").lower() == address for t in targets):
+        return json_error("Target already exists", 409)
+
+    new_target = {"address": address}
+    if data.get("remark"): new_target["remark"] = data["remark"]
+    if data.get("trade_mode"): new_target["trade_mode"] = data["trade_mode"]
+    if data.get("trade_ratio") is not None: new_target["trade_ratio"] = float(data["trade_ratio"])
+    if data.get("trade_fixed_usd") is not None: new_target["trade_fixed_usd"] = float(data["trade_fixed_usd"])
+    if data.get("trade_max_usd") is not None: new_target["trade_max_usd"] = float(data["trade_max_usd"])
+    if data.get("trade_fixed_virtuals") is not None: new_target["trade_fixed_virtuals"] = float(data["trade_fixed_virtuals"])
+
+    targets.append(new_target)
+
+    try:
+        with open(config_file, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    except Exception as e:
+        return json_error(f"Failed to write config: {e}", 500)
+
+    return json_ok({"ok": True})
+
+
+async def handle_update_target(request: web.Request):
+    """PUT /api/config/targets/{address} - 更新跟单目标"""
+    address = request.match_info.get("address", "").strip().lower()
+    if not address:
+        return json_error("address is required", 400)
+
+    try:
+        data = await request.json()
+    except Exception:
+        return json_error("Invalid JSON", 400)
+
+    import yaml
+    config_file = Path("config.yaml")
+    try:
+        with open(config_file, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        return json_error(f"Failed to read config: {e}", 500)
+
+    targets = cfg.get("copy_trading", {}).get("targets", [])
+    found = None
+    for t in targets:
+        if t.get("address", "").lower() == address:
+            found = t
+            break
+
+    if found is None:
+        return json_error("Target not found", 404)
+
+    for key in ("remark", "trade_mode"):
+        if key in data:
+            found[key] = data[key]
+    for key in ("trade_ratio", "trade_fixed_usd", "trade_max_usd", "trade_fixed_virtuals"):
+        if key in data and data[key] is not None:
+            found[key] = float(data[key])
+        elif key in data and data[key] is None:
+            found.pop(key, None)
+
+    try:
+        with open(config_file, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    except Exception as e:
+        return json_error(f"Failed to write config: {e}", 500)
+
+    return json_ok({"ok": True})
+
+
+async def handle_delete_target(request: web.Request):
+    """DELETE /api/config/targets/{address} - 删除跟单目标"""
+    address = request.match_info.get("address", "").strip().lower()
+    if not address:
+        return json_error("address is required", 400)
+
+    import yaml
+    config_file = Path("config.yaml")
+    try:
+        with open(config_file, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        return json_error(f"Failed to read config: {e}", 500)
+
+    targets = cfg.get("copy_trading", {}).get("targets", [])
+    new_targets = [t for t in targets if t.get("address", "").lower() != address]
+
+    if len(new_targets) == len(targets):
+        return json_error("Target not found", 404)
+
+    cfg["copy_trading"]["targets"] = new_targets
+
+    try:
+        with open(config_file, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    except Exception as e:
+        return json_error(f"Failed to write config: {e}", 500)
+
+    return json_ok({"ok": True})
+
+
+# ── 参数更新 ──────────────────────────────────────────────
+
+
+async def handle_update_params(request: web.Request):
+    """PUT /api/config/params - 更新交易参数"""
+    try:
+        data = await request.json()
+    except Exception:
+        return json_error("Invalid JSON", 400)
+
+    import yaml
+    config_file = Path("config.yaml")
+    try:
+        with open(config_file, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        return json_error(f"Failed to read config: {e}", 500)
+
+    ct = cfg.setdefault("copy_trading", {})
+    ct_keys = ["trade_mode", "trade_ratio", "trade_fixed_usd", "trade_max_usd",
+               "trade_fixed_virtuals", "slippage", "min_trade_usd",
+               "daily_loss_limit_usd", "take_profit_roi", "take_profit_check_sec",
+               "poll_interval_sec", "gas_limit_gwei"]
+    for key in ct_keys:
+        if key in data:
+            ct[key] = data[key]
+
+    if "base_token" in data:
+        cfg["base_token"] = str(data["base_token"]).upper()
+
+    try:
+        with open(config_file, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    except Exception as e:
+        return json_error(f"Failed to write config: {e}", 500)
+
+    return json_ok({"ok": True})
+
+
+# ── 持仓查询 ──────────────────────────────────────────────
+
+
+async def handle_positions_all(_request):
+    """GET /api/positions/all - 返回所有持仓（开仓 + 平仓）"""
+    open_rows = await _query_db(
+        "SELECT * FROM trades WHERE side='buy' AND is_open=1 "
+        "ORDER BY created_at DESC LIMIT 50"
+    )
+    closed_rows = await _query_db(
+        "SELECT * FROM trades WHERE side='sell' AND status='success' "
+        "ORDER BY created_at DESC LIMIT 50"
+    )
+
+    return json_ok({
+        "open": [_row_to_trade(r) for r in open_rows],
+        "closed": [_row_to_trade(r) for r in closed_rows],
+        "summary": {
+            "open_count": len(open_rows),
+            "closed_count": len(closed_rows),
+            "total_invested_open": sum(float(r.get("cost_usd", 0)) for r in open_rows),
+            "realized_pnl": sum(float(r.get("pnl_usd", 0)) for r in closed_rows),
+        },
+    })
+
+
+async def handle_refresh_prices(request: web.Request):
+    """POST /api/positions/refresh-prices - 刷新持仓代币价格"""
+    okx_cfg = request.app.get("okx_cfg")
+    if not okx_cfg:
+        return json_ok({
+            "tokens": {},
+            "positions": {},
+            "error": "OKX 凭证未配置",
+        })
+
+    from src.executor.okx_client import OKXDexClient
+    from src.executor.trader import USDC_BASE
+
+    open_rows = await _query_db(
+        "SELECT token_address, amount_out, cost_usd FROM trades "
+        "WHERE side='buy' AND is_open=1"
+    )
+
+    tokens = {}
+    positions = {}
+    async with OKXDexClient(
+        okx_cfg["api_key"], okx_cfg["secret"], okx_cfg["passphrase"]
+    ) as okx:
+        for row in open_rows:
+            addr = row["token_address"]
+            if addr in positions:
+                continue
+            amount = int(row.get("amount_out") or 0)
+            cost = float(row.get("cost_usd") or 0)
+            if amount <= 0:
+                continue
+
+            quote = await okx.get_quote(addr, USDC_BASE, amount)
+            current_price = None
+            current_value = None
+            if quote:
+                from_amount = int(quote.get("fromTokenAmount", "0"))
+                if from_amount > 0:
+                    to_amount = float(quote.get("toTokenAmount", "0"))
+                    to_decimals = int((quote.get("toToken") or {}).get("decimals", 18))
+                    current_value = to_amount / (10 ** to_decimals)
+                    from_decimals = int((quote.get("fromToken") or {}).get("decimals", 18))
+                    current_price = current_value / (amount / (10 ** from_decimals)) if amount > 0 else None
+
+            tokens[addr] = {
+                "symbol": None,
+                "decimals": 18,
+                "current_price": round(current_price, 12) if current_price else None,
+            }
+            positions[addr] = {
+                "amount": amount,
+                "cost_basis_usd": round(cost, 4),
+                "current_price": round(current_price, 12) if current_price else None,
+                "current_value_usd": round(current_value, 4) if current_value else None,
+                "unrealized_pnl": round(current_value - cost, 4) if current_value else None,
+                "roi_pct": round((current_value - cost) / cost * 100, 2) if current_value and cost > 0 else None,
+            }
+
+    return json_ok({"tokens": tokens, "positions": positions})
 
 
 # ── 启动 ────────────────────────────────────────────────────
@@ -562,6 +856,12 @@ def create_app() -> web.Application:
     app.router.add_get("/api/config/wallet", handle_get_wallet)
     app.router.add_put("/api/config/wallet", handle_update_wallet)
     app.router.add_post("/api/config/toggle", handle_toggle_execution)
+    app.router.add_post("/api/config/targets", handle_add_target)
+    app.router.add_put("/api/config/targets/{address}", handle_update_target)
+    app.router.add_delete("/api/config/targets/{address}", handle_delete_target)
+    app.router.add_put("/api/config/params", handle_update_params)
+    app.router.add_get("/api/positions/all", handle_positions_all)
+    app.router.add_post("/api/positions/refresh-prices", handle_refresh_prices)
 
     # CORS preflight
     app.router.add_route("OPTIONS", "/api/{tail:.*}", _cors_preflight)

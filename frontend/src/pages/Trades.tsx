@@ -1,15 +1,38 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchTrades, fetchTradeStats } from "@/lib/api";
-import type { TradeStats } from "@/types/api";
+import type { TradeStats, StrategyFilter } from "@/types/api";
 import { PageHeader, SectionCard, MetricCard, LoadingState } from "@/components/app-primitives";
 import { formatTime } from "@/lib/tokens";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+
+const strategyOptions: { value: StrategyFilter; label: string }[] = [
+  { value: "all", label: "全部" },
+  { value: "copy", label: "跟单" },
+  { value: "grid", label: "网格" },
+  { value: "dca", label: "DCA" },
+  { value: "buyback", label: "回购卖" },
+];
+
+const strategyLabels: Record<string, string> = {
+  "": "跟单",
+  grid: "网格",
+  grid_buy: "网格",
+  grid_sell: "网格",
+  dca: "DCA",
+  deep_buy: "DCA",
+  buyback_sell: "回购卖",
+};
 
 export default function Trades() {
+  const [strategyFilter, setStrategyFilter] = useState<StrategyFilter>("all");
+
   const { data: tradesData, isLoading } = useQuery({
-    queryKey: ["trades"],
-    queryFn: () => fetchTrades(100, 0),
+    queryKey: ["trades", strategyFilter],
+    queryFn: () => fetchTrades(100, 0, strategyFilter),
   });
   const { data: stats } = useQuery<TradeStats>({ queryKey: ["stats"], queryFn: fetchTradeStats });
 
@@ -20,7 +43,7 @@ export default function Trades() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="交易记录" description="跟单交易的完整记录" />
+      <PageHeader title="交易记录" description="跟单与策略交易的完整记录" />
 
       {stats && (
         <div className="grid gap-4 sm:grid-cols-3">
@@ -31,10 +54,34 @@ export default function Trades() {
       )}
 
       <SectionCard title="交易明细" description={trades.length > 0 ? `最近 ${trades.length} 笔` : undefined}>
+        {/* 策略筛选按钮组 */}
+        <div className="mb-4 flex items-center gap-1.5">
+          <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/60">
+            策略
+          </span>
+          {strategyOptions.map((opt) => (
+            <Button
+              key={opt.value}
+              variant={strategyFilter === opt.value ? "default" : "outline"}
+              size="sm"
+              onClick={() => setStrategyFilter(opt.value)}
+              className={cn(
+                "text-xs",
+                strategyFilter === opt.value
+                  ? ""
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {opt.label}
+            </Button>
+          ))}
+        </div>
+
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>时间</TableHead>
+              <TableHead>策略</TableHead>
               <TableHead>方向</TableHead>
               <TableHead>状态</TableHead>
               <TableHead>Token In</TableHead>
@@ -46,12 +93,17 @@ export default function Trades() {
           <TableBody>
             {trades.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">暂无交易记录</TableCell>
+                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">暂无交易记录</TableCell>
               </TableRow>
             ) : (
               trades.map((t: any) => (
                 <TableRow key={t.id}>
                   <TableCell className="whitespace-nowrap">{formatTime(t.created_at)}</TableCell>
+                  <TableCell>
+                    <span className="text-xs font-medium text-muted-foreground">
+                      {strategyLabels[t.strategy] || t.strategy || "跟单"}
+                    </span>
+                  </TableCell>
                   <TableCell>
                     <Badge variant={t.side === "buy" ? "success" : "danger"}>{t.side === "buy" ? "买入" : "卖出"}</Badge>
                   </TableCell>

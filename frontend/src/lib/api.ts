@@ -1,4 +1,4 @@
-import type { AppConfig, WalletInfo, TradeRecord, TradeStats, Position, PositionAllResponse, CopyTarget, BalancesResponse, GridState, GridHistoryResponse } from '@/types/api'
+import type { AppConfig, WalletInfo, TradeRecord, TradeStats, Position, PositionAllResponse, CopyTarget, BalancesResponse, GridState, GridHistoryResponse, StrategyFilter } from '@/types/api'
 
 const BASE = '/api'
 
@@ -56,8 +56,10 @@ export function updateParams(params: Record<string, unknown>): Promise<{ ok: boo
 }
 
 // Trades
-export function fetchTrades(limit = 50, offset = 0): Promise<{ trades: TradeRecord[] }> {
-  return request(`/trades?limit=${limit}&offset=${offset}`)
+export function fetchTrades(limit = 50, offset = 0, strategy: StrategyFilter = 'all'): Promise<{ trades: TradeRecord[] }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (strategy !== 'all') params.set('strategy', strategy)
+  return request(`/trades?${params}`)
 }
 
 export function fetchTradeStats(): Promise<TradeStats> {

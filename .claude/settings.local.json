@@ -20,7 +20,9 @@
       "Bash(npm run *)",
       "Bash(PYTHONPATH=. python src/main.py --check-config)",
       "Bash(timeout 5 PYTHONPATH=. python src/main.py --dry-run)",
-      "Bash(PYTHONPATH=. python -m pytest tests/ -x)"
+      "Bash(PYTHONPATH=. python -m pytest tests/ -x)",
+      "Bash(sqlite3 *)",
+      "Bash(python3 *)"
     ]
   }
 }

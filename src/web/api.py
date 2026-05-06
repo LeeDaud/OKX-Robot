@@ -24,7 +24,7 @@ DB_PATH = "trades.db"
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
 }
 
@@ -194,17 +194,65 @@ async def handle_grid_history(request: web.Request) -> web.Response:
 
 
 async def handle_config(_request):
-    state = _read_state()
+    cfg = _load_full_config()
+    grid_raw = {"enabled": cfg["grid_enabled"], "token": cfg["grid_token"],
+                 "levels": cfg["grid_levels"], "spread_pct": cfg["grid_spread_pct"],
+                 "investment_usdc": cfg["grid_investment_usdc"], "profit_pct": cfg["grid_profit_pct"]}
+    # read raw config for buyback_watch
+    try:
+        import yaml
+        with open("config.yaml", encoding="utf-8") as f:
+            raw_cfg = yaml.safe_load(f) or {}
+    except Exception:
+        raw_cfg = {}
     return json_ok({
-        "base_token": "USDC",
-        "trade_mode": "grid",
-        "dry_run": True,
-        "daily_loss_limit_usd": 10,
-        "slippage": 0.01,
-        "gas_limit_gwei": 50,
-        "wallet_address": os.environ.get("WALLET_ADDRESS", ""),
-        "copy_targets": [],
-        "buyback_watch": {},
+        # 原有 flat 字段（向后兼容）
+        "base_token": cfg["base_token"],
+        "trade_mode": cfg["trade_mode"],
+        "trade_ratio": cfg["trade_ratio"],
+        "trade_fixed_usd": cfg["trade_fixed_usd"],
+        "trade_max_usd": cfg["trade_max_usd"],
+        "trade_fixed_virtuals": cfg["trade_fixed_virtuals"],
+        "token_whitelist": cfg["token_whitelist"],
+        "min_trade_usd": cfg["min_trade_usd"],
+        "daily_loss_limit_usd": cfg["daily_loss_limit_usd"],
+        "slippage": cfg["slippage"],
+        "gas_limit_gwei": cfg["gas_limit_gwei"],
+        "take_profit_roi": cfg["take_profit_roi"],
+        "take_profit_check_sec": cfg["take_profit_check_sec"],
+        "dry_run": cfg["dry_run"],
+        "poll_interval_sec": cfg["poll_interval_sec"],
+        "wallet_address": cfg["wallet_address"],
+        "copy_targets": cfg["copy_targets"],
+        "buyback_watch": raw_cfg.get("buyback_watch", {}),
+        # 结构化分组
+        "wallet": {
+            "wallet_address": cfg["wallet_address"],
+            "rpc_http_url": cfg["rpc_http_url"],
+            "rpc_ws_url": cfg["rpc_ws_url"],
+            "has_private_key": cfg["has_private_key"],
+            "has_okx_api_key": cfg["has_okx_api_key"],
+            "dry_run": cfg["dry_run"],
+            "base_token": cfg["base_token"],
+        },
+        "copy_trading": {
+            "enabled": bool(cfg.get("copy_trading_enabled", False)),
+            "trade_mode": cfg["trade_mode"],
+            "trade_ratio": cfg["trade_ratio"],
+            "trade_fixed_usd": cfg["trade_fixed_usd"],
+            "trade_max_usd": cfg["trade_max_usd"],
+            "trade_fixed_virtuals": cfg["trade_fixed_virtuals"],
+            "token_whitelist": cfg["token_whitelist"],
+            "min_trade_usd": cfg["min_trade_usd"],
+            "daily_loss_limit_usd": cfg["daily_loss_limit_usd"],
+            "slippage": cfg["slippage"],
+            "gas_limit_gwei": cfg["gas_limit_gwei"],
+            "take_profit_roi": cfg["take_profit_roi"],
+            "take_profit_check_sec": cfg["take_profit_check_sec"],
+            "poll_interval_sec": cfg["poll_interval_sec"],
+            "targets": cfg["copy_targets"],
+        },
+        "grid": grid_raw,
     })
 
 
@@ -224,6 +272,40 @@ async def handle_stats(_request):
         "all": {"total_trades": len(rows), "total_invested": round(total_invested, 2), "realized_pnl": round(realized_pnl, 2)},
         "today_pnl": round(today_pnl, 2),
     })
+
+
+async def handle_trades(request: web.Request) -> web.Response:
+    strategy = request.query.get("strategy", "").strip()
+    limit = int(request.query.get("limit", 50))
+    offset = int(request.query.get("offset", 0))
+    limit = min(max(limit, 1), 500)
+
+    if strategy in ("", "all"):
+        sql = ("SELECT * FROM trades ORDER BY created_at DESC "
+               "LIMIT ? OFFSET ?")
+        params = (limit, offset)
+    elif strategy == "copy":
+        sql = ("SELECT * FROM trades WHERE strategy='' ORDER BY created_at DESC "
+               "LIMIT ? OFFSET ?")
+        params = (limit, offset)
+    elif strategy == "grid":
+        sql = ("SELECT * FROM trades WHERE strategy LIKE 'grid%' ORDER BY created_at DESC "
+               "LIMIT ? OFFSET ?")
+        params = (limit, offset)
+    elif strategy == "dca":
+        sql = ("SELECT * FROM trades WHERE strategy IN ('dca','deep_buy') ORDER BY created_at DESC "
+               "LIMIT ? OFFSET ?")
+        params = (limit, offset)
+    elif strategy == "buyback":
+        sql = ("SELECT * FROM trades WHERE strategy='buyback_sell' ORDER BY created_at DESC "
+               "LIMIT ? OFFSET ?")
+        params = (limit, offset)
+    else:
+        return json_error(f"Unknown strategy filter: {strategy}", 400)
+
+    rows = await _query_db(sql, params)
+    trades = [_row_to_trade(r) for r in rows]
+    return json_ok({"trades": trades})
 
 
 async def handle_balances(_request):
@@ -268,6 +350,95 @@ def _load_okx_cfg() -> dict | None:
     return {"api_key": api_key, "secret": secret, "passphrase": passphrase, "grid_token": token}
 
 
+def _load_full_config() -> dict:
+    """Read complete config from config.yaml + .env, return as flat dict."""
+    from dotenv import load_dotenv
+    import yaml
+    load_dotenv()
+    try:
+        with open("config.yaml", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception:
+        raw = {}
+    copy_raw = raw.get("copy_trading", {}) or {}
+    targets_raw = copy_raw.get("targets", []) or []
+    grid_raw = raw.get("grid", {}) or {}
+
+    return {
+        "base_token": str(raw.get("base_token", "VIRTUAL")).upper(),
+        "trade_mode": str(copy_raw.get("trade_mode", "monitor")),
+        "trade_ratio": float(copy_raw.get("trade_ratio", 0.5)),
+        "trade_fixed_usd": float(copy_raw.get("trade_fixed_usd", 50)),
+        "trade_max_usd": float(copy_raw.get("trade_max_usd", 100)),
+        "trade_fixed_virtuals": float(copy_raw.get("trade_fixed_virtuals", 30)),
+        "token_whitelist": list(copy_raw.get("token_whitelist", [])),
+        "min_trade_usd": float(copy_raw.get("min_trade_usd", 5)),
+        "daily_loss_limit_usd": float(raw.get("daily_loss_limit_usd", 10)),
+        "slippage": float(raw.get("slippage", 0.01)),
+        "gas_limit_gwei": float(raw.get("gas_limit_gwei", 50)),
+        "take_profit_roi": float(raw.get("take_profit_roi", 0)),
+        "take_profit_check_sec": float(raw.get("take_profit_check_sec", 60)),
+        "dry_run": bool(raw.get("dry_run", True)),
+        "poll_interval_sec": float(raw.get("poll_interval_sec", 10)),
+        "wallet_address": os.environ.get("WALLET_ADDRESS", ""),
+        "rpc_http_url": os.environ.get("RPC_HTTP_URL", ""),
+        "rpc_ws_url": os.environ.get("RPC_WS_URL", ""),
+        "has_private_key": bool(os.environ.get("PRIVATE_KEY", "")),
+        "has_okx_api_key": bool(os.environ.get("OKX_API_KEY", "")),
+        "feishu_webhook_url": str(raw.get("feishu_webhook_url", "")),
+        "copy_targets": targets_raw,
+        "grid_enabled": bool(grid_raw.get("enabled", False)),
+        "grid_token": str(grid_raw.get("token", "")),
+        "grid_levels": int(grid_raw.get("levels", 6)),
+        "grid_spread_pct": float(grid_raw.get("spread_pct", 2.0)),
+        "grid_investment_usdc": float(grid_raw.get("investment_usdc", 60)),
+        "grid_profit_pct": float(grid_raw.get("profit_pct", 3.0)),
+    }
+
+
+def _row_to_trade(row: dict) -> dict:
+    """Map a DB row to the frontend TradeRecord shape."""
+    amount_in = int(row.get("amount_in") or 0)
+    amount_out = int(row.get("amount_out") or 0)
+    cost = float(row.get("cost_usd") or 0)
+    pnl = float(row.get("pnl_usd") or 0)
+    roi_raw = float(row.get("roi") or 0)
+    token_addr = row.get("token_address", "")
+    side = row.get("side", "buy")
+    filled_num = int(row.get("filled_amount") or 0)
+
+    # entry_price: cost / tokens_received (assume 18 decimals for tokens)
+    entry_price = 0.0
+    if amount_out > 0 and cost > 0:
+        entry_price = cost / (amount_out / 1e18)
+
+    exit_price = 0.0
+    if amount_in > 0 and side == "sell":
+        exit_price = (cost + max(pnl, 0)) / (amount_in / 1e18) if amount_in > 0 else 0.0
+
+    return {
+        "id": row["id"],
+        "source_tx": row.get("source_tx") or "",
+        "source_addr": row.get("source_addr") or row.get("tx_hash") or "",
+        "token_in": token_addr if side == "buy" else "",
+        "token_out": token_addr if side == "sell" else "",
+        "amount_in": row.get("amount_in", "0"),
+        "amount_out": amount_out,
+        "our_tx": row.get("our_tx_hash") or None,
+        "status": row.get("status", ""),
+        "side": side,
+        "position_id": None,
+        "entry_price": round(entry_price, 12),
+        "exit_price": round(exit_price, 12) if exit_price else 0.0,
+        "roi_pct": round(roi_raw, 4),
+        "pnl": round(pnl, 4),
+        "created_at": row.get("created_at", ""),
+        "filled_amount": row.get("filled_amount", "0"),
+        "filled_cost_usd": round(cost, 4),
+        "strategy": row.get("strategy", ""),
+    }
+
+
 def create_app() -> web.Application:
     app = web.Application()
 
@@ -282,6 +453,7 @@ def create_app() -> web.Application:
     # 旧页面兼容端点
     app.router.add_get("/api/config", handle_config)
     app.router.add_get("/api/trades/stats", handle_stats)
+    app.router.add_get("/api/trades", handle_trades)
     app.router.add_get("/api/config/balances", handle_balances)
 
     # CORS preflight

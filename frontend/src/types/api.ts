@@ -27,6 +27,48 @@ export interface AppConfig {
   wallet_address: string
   copy_targets: CopyTarget[]
   buyback_watch: Record<string, string>
+
+  // 结构化分组（可选，向后兼容）
+  wallet?: WalletConfig
+  copy_trading?: CopyTradingConfig
+  grid?: GridConfigInfo
+}
+
+export interface WalletConfig {
+  wallet_address: string
+  rpc_http_url: string
+  rpc_ws_url?: string
+  has_private_key: boolean
+  has_okx_api_key: boolean
+  dry_run: boolean
+  base_token: string
+}
+
+export interface CopyTradingConfig {
+  enabled: boolean
+  trade_mode: string
+  trade_ratio: number
+  trade_fixed_usd: number
+  trade_max_usd: number
+  trade_fixed_virtuals: number
+  token_whitelist: string[]
+  min_trade_usd: number
+  daily_loss_limit_usd: number
+  slippage: number
+  gas_limit_gwei: number
+  take_profit_roi: number
+  take_profit_check_sec: number
+  poll_interval_sec: number
+  targets: CopyTarget[]
+}
+
+export interface GridConfigInfo {
+  enabled: boolean
+  token: string
+  levels: number
+  spread_pct: number
+  investment_usdc: number
+  profit_pct: number
 }
 
 export interface WalletInfo {
@@ -56,7 +98,10 @@ export interface TradeRecord {
   created_at: string
   filled_amount?: string
   filled_cost_usd?: number
+  strategy: string
 }
+
+export type StrategyFilter = 'all' | 'copy' | 'grid' | 'dca' | 'buyback'
 
 export interface TradeStats {
   today: { total: number; success: number; pnl: number }

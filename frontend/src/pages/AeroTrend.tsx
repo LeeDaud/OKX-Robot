@@ -2,11 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchAeroState } from "@/lib/api";
 import type { AeroState } from "@/types/api";
 import { PageHeader, MetricCard, SectionCard, StatusBadge, LoadingState, EmptyState } from "@/components/app-primitives";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatTime } from "@/lib/tokens";
-import { TrendingUp, TrendingDown, Timer, DollarSign, Layers, AlertTriangle } from "lucide-react";
+import { TrendingUp, Layers, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function formatPct(v: number): string {

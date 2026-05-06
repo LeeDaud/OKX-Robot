@@ -260,7 +260,7 @@ async def handle_config(_request):
 
 async def handle_stats(_request):
     rows = await _query_db(
-        "SELECT side, cost_usd, pnl_usd FROM trades WHERE status='success'"
+        "SELECT side, cost_usd, pnl_usd, created_at FROM trades WHERE status='success'"
     )
     today_prefix = datetime.now(timezone.utc).date().isoformat()
     today_trades = [r for r in rows if r.get("created_at", "").startswith(today_prefix)]

@@ -538,7 +538,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                     strategy_state=strategy_state,
                     guard=guard,
                 )
-                aero_pos_mgr.load()
+                await aero_pos_mgr.load()
                 aero_trader_ref = trader
                 aero_strategy_ok = True
                 logger.info("[AERO] 趋势策略已初始化: 轮询 %.0fs",
@@ -588,7 +588,7 @@ async def run(dry_run_override: bool | None = None) -> None:
                                         pnl_pct * 100, (tx_hash or "none")[:12])
 
                             if is_full:
-                                aero_pos_mgr.close_position(pnl_pct)
+                                await aero_pos_mgr.close_position(pnl_pct)
                             else:
                                 aero_pos_mgr.partial_close(pnl_pct, pct)
 

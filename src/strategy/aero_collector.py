@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+from web3 import Web3
+
 from src.executor.okx_client import OKXDexClient
 from src.rpc.router import RPCRouter
 
@@ -22,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Base 链 Aerodrome 池子常量
 AERO_ADDRESS = "0x940181a94a35a4569e4529a3cdfb74e38fd98631"
 USDC_ADDRESS = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
-AERO_USDC_POOL = "0xcddac48af89589052ff14a3cacf58596fe7e2be2"
+AERO_USDC_POOL = Web3.to_checksum_address("0xcddac48af89589052ff14a3cacf58596fe7e2be2")
 
 # keccak256("Swap(address,uint256,uint256,uint256,uint256,address)")
 SWAP_TOPIC = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822"
@@ -101,9 +103,9 @@ class AeroMarketCollector:
     ):
         self._w3 = w3
         self._okx = okx
-        self._pool = pool_addr
-        self._aero = aero_addr
-        self._usdc = usdc_addr
+        self._pool = Web3.to_checksum_address(pool_addr)
+        self._aero = Web3.to_checksum_address(aero_addr)
+        self._usdc = Web3.to_checksum_address(usdc_addr)
 
         # 滚动价格窗口: (timestamp, price) — 最长 1h
         self._price_buffer: deque[tuple[datetime, float]] = deque(maxlen=3600)

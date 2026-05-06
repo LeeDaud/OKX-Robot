@@ -148,7 +148,7 @@ class PositionManager:
 
     # ── 持久化 ─────────────────────────────────────────────────
 
-    def load(self) -> None:
+    async def load(self) -> None:
         """从 state.json 恢复持仓和连续亏损计数。"""
         state = self._state_mgr.load()
         raw_pos = state.get(POSITION_KEY)
@@ -161,7 +161,7 @@ class PositionManager:
 
         # 初始从 DB 恢复连续亏损计数（跨重启）
         if self._consecutive_losses == 0 and not self._pos.has_position:
-            self._sync_consecutive_losses()
+            await self._sync_consecutive_losses()
 
         logger.info(
             "AERO 持仓已恢复: pos=%s losses=%d",
@@ -201,7 +201,7 @@ class PositionManager:
         )
         self.save()
 
-    def close_position(self, pnl_pct: float) -> None:
+    async def close_position(self, pnl_pct: float) -> None:
         """平仓，记录盈亏。"""
         if not self._pos.has_position:
             return
@@ -217,7 +217,7 @@ class PositionManager:
 
         # 保守模式: 单日盈利达 cap
         if pnl_pct > 0:
-            day_pnl = self._compute_day_pnl()
+            day_pnl = await self._compute_day_pnl()
             if day_pnl >= self._get_daily_profit_cap_pct():
                 self._conservative_mode = True
                 logger.info("AERO 进入保守模式: 当日盈利已达上限")
@@ -295,11 +295,10 @@ class PositionManager:
 
     # ── 内部 ─────────────────────────────────────────────────────
 
-    def _sync_consecutive_losses(self) -> None:
+    async def _sync_consecutive_losses(self) -> None:
         """从 DB 恢复最近交易盈亏。"""
-        import asyncio
         try:
-            trades = asyncio.run(get_trades_by_strategy(STRATEGY_NAME, self._db_path))
+            trades = await get_trades_by_strategy(STRATEGY_NAME, self._db_path)
             losses = 0
             for t in trades[:10]:  # 最近 10 笔
                 pnl = float(t.get("pnl_usd", 0))
@@ -311,11 +310,10 @@ class PositionManager:
         except Exception as e:
             logger.warning("同步连续亏损失败: %s", e)
 
-    def _compute_day_pnl(self) -> float:
+    async def _compute_day_pnl(self) -> float:
         """查询当日 AERO 策略总盈利比例。"""
-        import asyncio
         try:
-            trades = asyncio.run(get_trades_by_strategy(STRATEGY_NAME, self._db_path))
+            trades = await get_trades_by_strategy(STRATEGY_NAME, self._db_path)
             today = datetime.now(timezone.utc).date().isoformat()
             day_pnl = 0.0
             for t in trades:

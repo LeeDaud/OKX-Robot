@@ -13,9 +13,21 @@ import { cn } from "@/lib/utils";
 
 export default function WalletPage() {
   const qc = useQueryClient();
-  const { data: wallet, isLoading } = useQuery<WalletInfo>({ queryKey: ["wallet"], queryFn: fetchWallet });
-  const { data: config } = useQuery<AppConfig>({ queryKey: ["config"], queryFn: fetchConfig });
-  const { data: gridState } = useQuery<GridState>({ queryKey: ["grid-state"], queryFn: fetchGridState });
+  const { data: wallet, isLoading } = useQuery<WalletInfo>({
+    queryKey: ["wallet"],
+    queryFn: fetchWallet,
+    staleTime: 5 * 60 * 1000, // 5分钟缓存
+  });
+  const { data: config } = useQuery<AppConfig>({
+    queryKey: ["config"],
+    queryFn: fetchConfig,
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: gridState } = useQuery<GridState>({
+    queryKey: ["grid-state"],
+    queryFn: fetchGridState,
+    staleTime: 2 * 60 * 1000,
+  });
 
   const [editOpen, setEditOpen] = useState(false);
   const [showSecrets, setShowSecrets] = useState(false);

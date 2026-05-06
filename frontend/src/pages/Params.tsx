@@ -9,7 +9,11 @@ import { Input, Select } from "@/components/ui/input";
 
 export default function Params() {
   const qc = useQueryClient();
-  const { data: config, isLoading } = useQuery<AppConfig>({ queryKey: ["config"], queryFn: fetchConfig });
+  const { data: config, isLoading } = useQuery<AppConfig>({
+    queryKey: ["config"],
+    queryFn: fetchConfig,
+    staleTime: 5 * 60 * 1000, // 5分钟缓存
+  });
   const [form, setForm] = useState<Record<string, any>>({});
   const [saving, setSaving] = useState(false);
 

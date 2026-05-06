@@ -26,7 +26,11 @@ function modeLabel(mode?: string): string {
 
 export default function Wallets() {
   const qc = useQueryClient();
-  const { data: config, isLoading } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
+  const { data: config, isLoading } = useQuery({
+    queryKey: ["config"],
+    queryFn: fetchConfig,
+    staleTime: 5 * 60 * 1000, // 5分钟缓存
+  });
 
   // Add dialog state
   const [addOpen, setAddOpen] = useState(false);

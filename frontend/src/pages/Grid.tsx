@@ -11,12 +11,15 @@ export default function Grid() {
   const { data: state, isLoading } = useQuery<GridState>({
     queryKey: ["grid-state"],
     queryFn: fetchGridState,
-    refetchInterval: 5000,
+    refetchInterval: 30000, // 30秒刷新一次
+    staleTime: 15000,
   });
 
   const { data: history } = useQuery<GridHistoryResponse>({
     queryKey: ["grid-history"],
     queryFn: fetchGridHistory,
+    refetchInterval: 60000, // 1分钟刷新一次
+    staleTime: 30000,
   });
 
   if (isLoading) return <LoadingState label="正在加载网格策略..." />;

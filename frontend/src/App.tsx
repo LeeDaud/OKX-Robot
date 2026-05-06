@@ -13,7 +13,12 @@ import Grid from "@/pages/Grid";
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { refetchInterval: 30000, staleTime: 15000, retry: 1 },
+    queries: {
+      refetchInterval: false, // 默认不自动刷新
+      staleTime: 30000, // 30秒内认为数据新鲜
+      retry: 1,
+      refetchOnWindowFocus: false, // 窗口聚焦时不刷新
+    },
   },
 });
 

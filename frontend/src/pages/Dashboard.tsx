@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { fetchConfig, fetchTradeStats, fetchPositions, fetchBalances, fetchGridState, fetchWallet as fetchWalletApi, toggleExecution } from "@/lib/api";
+import { fetchConfig, fetchTradeStats, fetchBalances, fetchGridState, fetchWallet as fetchWalletApi, toggleExecution } from "@/lib/api";
 import type { AppConfig, TradeStats, BalancesResponse, GridState, WalletInfo } from "@/types/api";
 import { PageHeader, MetricCard, SectionCard, LoadingState } from "@/components/app-primitives";
 import { Badge } from "@/components/ui/badge";
@@ -14,16 +14,44 @@ import { toast } from "sonner";
 
 export default function Dashboard() {
   const qc = useQueryClient();
-  const { data: config, isLoading } = useQuery<AppConfig>({ queryKey: ["config"], queryFn: fetchConfig });
-  const { data: stats } = useQuery<TradeStats>({ queryKey: ["stats"], queryFn: fetchTradeStats });
-  const { data: positions } = useQuery({ queryKey: ["positions"], queryFn: fetchPositions });
-  const { data: balanceData } = useQuery<BalancesResponse>({ queryKey: ["balances"], queryFn: fetchBalances });
-  const { data: gridState } = useQuery<GridState>({ queryKey: ["grid-state"], queryFn: fetchGridState });
-  const { data: wallet } = useQuery<WalletInfo>({ queryKey: ["wallet"], queryFn: fetchWalletApi });
+  // 配置类数据：5分钟缓存，不自动刷新
+  const { data: config, isLoading } = useQuery<AppConfig>({
+    queryKey: ["config"],
+    queryFn: fetchConfig,
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: wallet } = useQuery<WalletInfo>({
+    queryKey: ["wallet"],
+    queryFn: fetchWalletApi,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // 统计数据：1分钟刷新一次
+  const { data: stats } = useQuery<TradeStats>({
+    queryKey: ["stats"],
+    queryFn: fetchTradeStats,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
+  // 网格状态：30秒刷新一次
+  const { data: gridState } = useQuery<GridState>({
+    queryKey: ["grid-state"],
+    queryFn: fetchGridState,
+    refetchInterval: 30000,
+    staleTime: 15000,
+  });
+
+  // 余额数据：不自动刷新，用户手动刷新
+  const { data: balanceData } = useQuery<BalancesResponse>({
+    queryKey: ["balances"],
+    queryFn: fetchBalances,
+    staleTime: 2 * 60 * 1000,
+  });
 
   if (isLoading) return <LoadingState label="正在加载概览..." />;
 
-  const openCount = positions?.positions?.length ?? 0;
+  const openCount = stats?.today?.total ?? 0;
   const todayPnl = stats?.today_pnl ?? 0;
   const baseToken = config?.base_token ?? "USDC";
   const baseBalance = balanceData?.balances?.[baseToken];

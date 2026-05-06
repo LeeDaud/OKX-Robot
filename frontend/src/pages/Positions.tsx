@@ -86,7 +86,8 @@ export default function Positions({ strategy }: { strategy?: StrategyFilter }) {
   const { data, isLoading } = useQuery<PositionAllResponse>({
     queryKey: ["positions-all"],
     queryFn: fetchPositionsAll,
-    refetchInterval: 15000,
+    refetchInterval: 60000, // 1分钟刷新一次
+    staleTime: 30000,
   });
 
   const handleRefresh = useCallback(async () => {

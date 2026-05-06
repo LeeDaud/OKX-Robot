@@ -36,8 +36,15 @@ export default function Trades({ strategy: propStrategy }: { strategy?: Strategy
   const { data: tradesData, isLoading } = useQuery({
     queryKey: ["trades", activeStrategy],
     queryFn: () => fetchTrades(100, 0, activeStrategy),
+    refetchInterval: 60000, // 1分钟刷新一次
+    staleTime: 30000,
   });
-  const { data: stats } = useQuery<TradeStats>({ queryKey: ["stats"], queryFn: fetchTradeStats });
+  const { data: stats } = useQuery<TradeStats>({
+    queryKey: ["stats"],
+    queryFn: fetchTradeStats,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
 
   const trades = tradesData?.trades ?? [];
   const todayPnl = stats?.today_pnl ?? 0;

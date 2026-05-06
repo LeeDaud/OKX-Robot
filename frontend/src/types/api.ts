@@ -105,6 +105,20 @@ export type StrategyFilter = 'all' | 'copy' | 'grid' | 'dca' | 'buyback' | 'aero
 
 // ── AERO 趋势策略类型 ────────────────────────────────────
 
+export interface AeroCondition {
+  label: string
+  ok: boolean
+  current: number | boolean | string
+  threshold: number | boolean | string
+  hint: string
+}
+
+export interface AeroConditionGroup {
+  conditions: AeroCondition[]
+  all_ok?: boolean
+  label: string
+}
+
 export interface AeroState {
   enabled: boolean
   has_position: boolean
@@ -121,6 +135,13 @@ export interface AeroState {
   consecutive_losses: number
   entry_time: string
   buy_tx_hash: string
+  indicators: Record<string, number | boolean>
+  config: Record<string, number>
+  conditions: {
+    trend_startup: AeroConditionGroup
+    strong_pullback: AeroConditionGroup
+    exit: AeroConditionGroup
+  }
 }
 
 export interface TradeStats {

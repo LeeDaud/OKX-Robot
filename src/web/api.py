@@ -860,20 +860,46 @@ def _row_to_trade(row: dict) -> dict:
 
 async def handle_aero_state(_request):
     """GET /api/aero/state - AERO 趋势策略状态"""
+    from src.config.loader import load_config
+
     state = _read_state()
     raw_pos = state.get("aero_position", {})
     consecutive = int(state.get("aero_consecutive_losses", 0))
+    snap = state.get("aero_snapshot", {}) or {}
 
-    # 读取 enabled 状态
+    # 读取 enabled + config 阈值
     enabled = False
+    cfg = {}
     try:
-        import yaml
-        with open("config.yaml", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
-        aero_raw = raw.get("aero_trend", {}) or {}
-        enabled = bool(aero_raw.get("enabled", False))
+        ac = load_config().aero_trend
+        enabled = ac.enabled
+        cfg = {
+            "min_return_5m": ac.min_return_5m,
+            "max_return_5m": ac.max_return_5m,
+            "min_return_15m": ac.min_return_15m,
+            "max_return_30m": ac.max_return_30m,
+            "min_volume_ratio": ac.min_volume_ratio,
+            "min_buy_pressure": ac.min_buy_pressure,
+            "min_liquidity_usd": ac.min_liquidity_usd,
+            "max_slippage_buy": ac.max_slippage_buy,
+            "stop_loss_pct": ac.stop_loss_pct,
+            "time_stop_minutes": ac.time_stop_minutes,
+            "time_stop_min_profit": ac.time_stop_min_profit,
+            "take_profit_1_pct": ac.take_profit_1_pct,
+            "take_profit_2_pct": ac.take_profit_2_pct,
+            "trailing_stop_drawdown": ac.trailing_stop_drawdown,
+            "pullback_min": ac.pullback_min,
+            "pullback_max": ac.pullback_max,
+            "pullback_volume_ratio": ac.pullback_volume_ratio,
+            "pullback_buy_pressure": ac.pullback_buy_pressure,
+            "cooldown_minutes": ac.cooldown_minutes,
+            "position_size_pct": ac.position_size_pct,
+        }
     except Exception:
         pass
+
+    # 计算条件达标状态
+    conditions = _compute_aero_conditions(snap, cfg)
 
     return json_ok({
         "enabled": enabled,
@@ -891,7 +917,83 @@ async def handle_aero_state(_request):
         "consecutive_losses": consecutive,
         "entry_time": raw_pos.get("entry_time", ""),
         "buy_tx_hash": raw_pos.get("buy_tx_hash", ""),
+        # 新增：指标、阈值、条件
+        "indicators": snap,
+        "config": cfg,
+        "conditions": conditions,
     })
+
+
+def _compute_aero_conditions(snap: dict, cfg: dict) -> dict:
+    """计算条件达标状态，供前端展示。"""
+    p = snap.get("price", 0)
+    r5 = snap.get("return_5m", 0)
+    r15 = snap.get("return_15m", 0)
+    r30 = snap.get("return_30m", 0)
+    r1h = snap.get("return_1h", 0)
+    vwap = snap.get("vwap", 0)
+    ma20 = snap.get("ma_20m", 0)
+    vol_ratio = snap.get("volume_ratio", 0)
+    buy_p = snap.get("buy_pressure", 0)
+    liq = snap.get("pool_liquidity_usd", 0)
+    slip = snap.get("simulated_buy_slippage", 1)
+    pullback = snap.get("pullback_from_high", 0)
+    buy_vol = snap.get("buy_volume_5m", 0)
+    sell_vol = snap.get("sell_volume_5m", 0)
+    breakout = snap.get("price_breakout_1h", False)
+    above_vwap = p > vwap if vwap > 0 else False
+    above_ma = p > ma20 if ma20 > 0 else False
+    above_open = snap.get("price_above_open_1h", False)
+    near_vwap = (abs(p - vwap) / vwap < 0.02) if vwap > 0 else False
+    near_ma = (abs(p - ma20) / ma20 < 0.02) if ma20 > 0 else False
+    sell_declining = sell_vol < buy_vol * 0.8 if buy_vol > 0 else False
+
+    cr = cfg  # shorthand
+
+    def meets(label, ok, current, threshold, hint=""):
+        return {"label": label, "ok": ok, "current": current, "threshold": threshold, "hint": hint}
+
+    trend = [
+        meets("价格突破 1h 高", breakout, breakout, True, ""),
+        meets("价格 > VWAP", above_vwap, p, vwap, f"VWAP=${vwap:.6f}" if vwap else "N/A"),
+        meets("价格 > MA20", above_ma, p, ma20, f"MA20=${ma20:.6f}" if ma20 else "N/A"),
+        meets(f"5m 涨幅 ≥{cr.get('min_return_5m',0)*100:.0f}%", r5 >= cr.get("min_return_5m", 0), r5, cr.get("min_return_5m", 0), ""),
+        meets(f"5m 涨幅 ≤{cr.get('max_return_5m',0)*100:.0f}%", r5 <= cr.get("max_return_5m", 0), r5, cr.get("max_return_5m", 0), ""),
+        meets(f"15m 涨幅 ≥{cr.get('min_return_15m',0)*100:.0f}%", r15 >= cr.get("min_return_15m", 0), r15, cr.get("min_return_15m", 0), ""),
+        meets(f"30m 涨幅 <{cr.get('max_return_30m',0)*100:.0f}%", r30 < cr.get("max_return_30m", 0), r30, cr.get("max_return_30m", 0), ""),
+        meets(f"成交量 ≥{cr.get('min_volume_ratio',0):.1f}x", vol_ratio >= cr.get("min_volume_ratio", 0), vol_ratio, cr.get("min_volume_ratio", 0), ""),
+        meets(f"买入压力 ≥{cr.get('min_buy_pressure',0)*100:.0f}%", buy_p >= cr.get("min_buy_pressure", 0), buy_p, cr.get("min_buy_pressure", 0), ""),
+        meets(f"流动性 ≥${cr.get('min_liquidity_usd',0)//1000}K", liq >= cr.get("min_liquidity_usd", 0), liq, cr.get("min_liquidity_usd", 0), ""),
+        meets(f"滑点 <{cr.get('max_slippage_buy',0)*100:.0f}%", slip < cr.get("max_slippage_buy", 0), slip, cr.get("max_slippage_buy", 0), ""),
+    ]
+    all_trend_ok = all(c["ok"] for c in trend)
+
+    pullback_cond = [
+        meets("1h 趋势向上", r1h > 0, r1h, 0, ""),
+        meets("价格 > 1h 开盘价", above_open, above_open, True, ""),
+        meets("接近 VWAP/MA20", near_vwap or near_ma, near_vwap or near_ma, True, f"偏离 VWAP={abs(p-vwap)/vwap*100:.1f}%" if vwap > 0 else "N/A"),
+        meets(f"回撤 {cr.get('pullback_min',0)*100:.0f}-{cr.get('pullback_max',0)*100:.0f}%", cr.get("pullback_min", 0) <= pullback <= cr.get("pullback_max", 0), pullback, f"{cr.get('pullback_min',0)}-{cr.get('pullback_max',0)}", ""),
+        meets("卖压下降", sell_declining, f"{sell_vol:.0f}<{buy_vol*0.8:.0f}", f"{buy_vol*0.8:.0f}", ""),
+        meets(f"成交量 ≥{cr.get('pullback_volume_ratio',0):.1f}x", vol_ratio >= cr.get("pullback_volume_ratio", 0), vol_ratio, cr.get("pullback_volume_ratio", 0), ""),
+        meets(f"买入压力 ≥{cr.get('pullback_buy_pressure',0)*100:.0f}%", buy_p >= cr.get("pullback_buy_pressure", 0), buy_p, cr.get("pullback_buy_pressure", 0), ""),
+        meets(f"滑点 <{cr.get('max_slippage_buy',0)*100:.0f}%", slip < cr.get("max_slippage_buy", 0), slip, cr.get("max_slippage_buy", 0), ""),
+    ]
+    all_pullback_ok = all(c["ok"] for c in pullback_cond)
+
+    # 卖出条件
+    exit_cond = []
+    hp = snap.get("price", 1)
+    exit_cond.append(meets(f"硬止损 ≤{cr.get('stop_loss_pct',0)*100:.0f}%", False, 0, cr.get("stop_loss_pct", 0) * 100, ""))
+    exit_cond.append(meets("买入压力 <35%", buy_p < 0.35 if buy_p else False, buy_p, 0.35, ""))
+    exit_cond.append(meets("价格 < VWAP", p < vwap if vwap > 0 else False, p, vwap, ""))
+    exit_cond.append(meets("价格 < MA20", p < ma20 if ma20 > 0 else False, p, ma20, ""))
+    exit_cond.append(meets("放量下跌", vol_ratio >= 2 and r5 < 0, f"vol={vol_ratio:.1f} r5={r5*100:.1f}%", "vol≥2 & r5<0", ""))
+
+    return {
+        "trend_startup": {"conditions": trend, "all_ok": all_trend_ok, "label": "趋势启动型"},
+        "strong_pullback": {"conditions": pullback_cond, "all_ok": all_pullback_ok, "label": "强势回踩型"},
+        "exit": {"conditions": exit_cond, "label": "卖出信号"},
+    }
 
 
 def create_app() -> web.Application:

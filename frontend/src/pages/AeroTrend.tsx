@@ -1,14 +1,68 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchAeroState } from "@/lib/api";
-import type { AeroState } from "@/types/api";
+import type { AeroState, AeroConditionGroup } from "@/types/api";
 import { PageHeader, MetricCard, SectionCard, StatusBadge, LoadingState, EmptyState } from "@/components/app-primitives";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { TrendingUp, Layers, AlertTriangle } from "lucide-react";
+import { TrendingUp, Layers, AlertTriangle, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function formatPct(v: number): string {
   return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+}
+
+function formatCondValue(v: number | boolean | string): string {
+  if (typeof v === "boolean") return v ? "是" : "否";
+  if (typeof v === "number") {
+    if (Math.abs(v) < 0.001) return v.toFixed(6);
+    if (Math.abs(v) < 1) return (v * 100).toFixed(1) + "%";
+    if (v >= 1000) return "$" + (v / 1000).toFixed(0) + "K";
+    return v.toFixed(2);
+  }
+  return v;
+}
+
+function ConditionTable({ group, title }: { group: AeroConditionGroup; title: string }) {
+  const okCount = group.conditions.filter((c) => c.ok).length;
+  const total = group.conditions.length;
+  return (
+    <SectionCard title={title} description={`${okCount}/${total} 条件满足`}>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-8" />
+            <TableHead>条件</TableHead>
+            <TableHead>当前值</TableHead>
+            <TableHead>阈值</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {group.conditions.map((c, i) => (
+            <TableRow key={i}>
+              <TableCell>
+                {c.ok
+                  ? <Check className="size-4 text-[var(--success)]" />
+                  : <X className="size-4 text-[var(--danger)]" />
+                }
+              </TableCell>
+              <TableCell className="text-xs">{c.label}</TableCell>
+              <TableCell className="font-mono text-xs">{formatCondValue(c.current)}</TableCell>
+              <TableCell className="font-mono text-xs text-muted-foreground">
+                {c.hint || formatCondValue(c.threshold)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {group.all_ok !== undefined && (
+        <div className={cn("mt-3 rounded-xl px-4 py-2 text-sm font-medium text-center",
+          group.all_ok ? "bg-[var(--success-soft)] text-[var(--success-foreground)]" : "bg-[var(--danger-soft)] text-[var(--danger-foreground)]"
+        )}>
+          {group.all_ok ? "✓ 全部达标，可入场" : "✗ 条件未满足，等待中"}
+        </div>
+      )}
+    </SectionCard>
+  );
 }
 
 export default function AeroTrend() {
@@ -77,6 +131,55 @@ export default function AeroTrend() {
           hint={pos ? `最高价 $${state.highest_price.toFixed(6)}` : "等待买入信号"}
         />
       </div>
+
+      {/* ── 市场指标 ── */}
+      {state.indicators && Object.keys(state.indicators).length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard label="5m 涨幅" value={formatPct(state.indicators.return_5m as number)} hint="15m " />
+          <MetricCard label="15m 涨幅" value={formatPct(state.indicators.return_15m as number)} hint="30m " />
+          <MetricCard label="成交量倍率" value={`${(state.indicators.volume_ratio as number).toFixed(1)}x`} hint="vs 1h 均值" />
+          <MetricCard label="买入压力" value={`${((state.indicators.buy_pressure as number) * 100).toFixed(0)}%`} hint="最近 5min" />
+        </div>
+      )}
+
+      {/* ── 买入条件面板 ── */}
+      {state.conditions && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <ConditionTable group={state.conditions.trend_startup} title="趋势启动型" />
+          <ConditionTable group={state.conditions.strong_pullback} title="强势回踩型" />
+        </div>
+      )}
+
+      {/* ── 卖出条件 ── */}
+      {state.conditions && (
+        <SectionCard title="卖出信号" description="P0-P4 优先级">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-8" />
+                <TableHead>条件</TableHead>
+                <TableHead>当前值</TableHead>
+                <TableHead>说明</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {state.conditions.exit.conditions.map((c, i) => (
+                <TableRow key={i}>
+                  <TableCell>
+                    {c.ok
+                      ? <Check className="size-4 text-[var(--success)]" />
+                      : <X className="size-4 text-[var(--danger)]" />
+                    }
+                  </TableCell>
+                  <TableCell className="text-xs">{c.label}</TableCell>
+                  <TableCell className="font-mono text-xs">{formatCondValue(c.current)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{c.hint || formatCondValue(c.threshold)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </SectionCard>
+      )}
 
       {/* ── 止盈状态 ── */}
       {pos && (

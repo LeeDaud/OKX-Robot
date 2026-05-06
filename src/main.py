@@ -560,6 +560,32 @@ async def run(dry_run_override: bool | None = None) -> None:
 
                     aero_pos_mgr.position.update_price(snap.price)
                     aero_pos_mgr.save()  # 定期持久化让 API 读取最新状态
+
+                    # 持久化快照指标供前端展示
+                    state_mgr.update(**{"aero_snapshot": {
+                        "price": snap.price,
+                        "return_5m": snap.return_5m,
+                        "return_15m": snap.return_15m,
+                        "return_30m": snap.return_30m,
+                        "return_1h": snap.return_1h,
+                        "vwap": snap.vwap,
+                        "ma_20m": snap.ma_20m,
+                        "volume_5m": snap.volume_5m,
+                        "avg_volume_5m_1h": snap.avg_volume_5m_1h,
+                        "volume_ratio": snap.volume_ratio,
+                        "buy_volume_5m": snap.buy_volume_5m,
+                        "sell_volume_5m": snap.sell_volume_5m,
+                        "buy_pressure": snap.buy_pressure,
+                        "pool_liquidity_usd": snap.pool_liquidity_usd,
+                        "simulated_buy_slippage": snap.simulated_buy_slippage,
+                        "simulated_sell_slippage": snap.simulated_sell_slippage,
+                        "price_above_open_1h": snap.price_above_open_1h,
+                        "pullback_from_high": snap.pullback_from_high,
+                        "price_breakout_1h": snap.price_breakout_1h,
+                        "recent_high_1h": snap.recent_high_1h,
+                        "open_1h": snap.open_1h,
+                    }})
+
                     can, reason = aero_pos_mgr.can_trade()
 
                     if aero_pos_mgr.position.has_position:

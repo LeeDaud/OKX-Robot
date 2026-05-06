@@ -197,7 +197,8 @@ async def handle_config(_request):
     cfg = _load_full_config()
     grid_raw = {"enabled": cfg["grid_enabled"], "token": cfg["grid_token"],
                  "levels": cfg["grid_levels"], "spread_pct": cfg["grid_spread_pct"],
-                 "investment_usdc": cfg["grid_investment_usdc"], "profit_pct": cfg["grid_profit_pct"]}
+                 "investment_usdc": cfg["grid_investment_usdc"], "profit_pct": cfg["grid_profit_pct"],
+                 "max_slots": cfg.get("grid_max_slots", 12)}
     # read raw config for buyback_watch
     try:
         import yaml
@@ -791,6 +792,7 @@ def _load_full_config() -> dict:
         "grid_spread_pct": float(grid_raw.get("spread_pct", 2.0)),
         "grid_investment_usdc": float(grid_raw.get("investment_usdc", 60)),
         "grid_profit_pct": float(grid_raw.get("profit_pct", 3.0)),
+        "grid_max_slots": int(grid_raw.get("max_slots", 12)),
     }
 
 

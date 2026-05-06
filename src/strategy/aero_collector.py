@@ -229,7 +229,7 @@ class AeroMarketCollector:
                 "topics": [SWAP_TOPIC],
             })
         except Exception as e:
-            logger.warning("获取 Swap 事件失败: %s", e)
+            logger.debug("获取 Swap 事件失败: %s", e)
             return []
 
         self._last_swap_block = current_block
@@ -257,6 +257,8 @@ class AeroMarketCollector:
 
         if events:
             logger.debug("捕获 %d 个 Swap 事件 (block %d→%d)", len(events), from_block, current_block)
+        else:
+            logger.warning("获取 Swap 事件为空 (block %d→%d)", from_block, current_block)
 
         return events
 
@@ -270,7 +272,7 @@ class AeroMarketCollector:
             reserve1 = reserves[1]  # USDC reserves
             return 2 * (reserve1 / 1e6)  # 双边总流动性 ≈ 2 × USDC 侧
         except Exception as e:
-            logger.debug("获取流动性失败: %s", e)
+            logger.warning("获取流动性失败: %s", e)
             return 0.0
 
     async def _simulate_slippage(self, amount_usdc: float = 100) -> tuple[float, float]:

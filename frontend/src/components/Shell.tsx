@@ -171,7 +171,7 @@ export default function Shell() {
         }`}
       >
         {sidebarMode !== "hidden" && (
-          <div className="hidden lg:block">
+          <div className="hidden lg:block sticky top-6 self-start">
             <SidebarPanel mode={sidebarMode} />
           </div>
         )}

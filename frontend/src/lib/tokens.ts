@@ -6,6 +6,7 @@ const TOKEN_NAMES: Record<string, string> = {
   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "USDC",
   "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2": "USDT",
   "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b": "VIRTUAL",
+  "0x940181a94a35a4569e4529a3cdfb74e38fd98631": "AERO",
 }
 
 /** Shorten an address for display: 0x1234...5678 */

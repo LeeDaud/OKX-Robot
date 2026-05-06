@@ -25,13 +25,18 @@ from src.executor.trader import Trader, USDC_BASE
 from src.rpc.router import RPCRouter
 from src.db.database import init_db
 
-TOKEN = "0xc2bceb0ee69455da32abb10a5ba81c0299a925c8"
 AMOUNT_USDC = 0.1
 
 
 async def test_pipeline(live: bool):
     cfg = load_config()
     await init_db()
+
+    token = cfg.grid.token if cfg.grid.enabled else ""
+    if not token:
+        print("❌ 未启用网格策略，无法确定测试代币")
+        return
+    token_checksum = AsyncWeb3.to_checksum_address(token)
 
     wallet = AsyncWeb3.to_checksum_address(cfg.wallet_address)
     w3 = RPCRouter(cfg.rpc_http_url, cfg.rpc_http_url_fallback)
@@ -51,10 +56,10 @@ async def test_pipeline(live: bool):
 
         # ── Step 1: 报价测试 ──
         print(f"\n{'='*50}")
-        print(f"STEP 1: 报价测试  {AMOUNT_USDC} USDC → {TOKEN[:10]}")
+        print(f"STEP 1: 报价测试  {AMOUNT_USDC} USDC → {token[:10]}")
         print(f"{'='*50}")
 
-        quote = await okx.get_quote(USDC_BASE, TOKEN, amount_raw, 0.01)
+        quote = await okx.get_quote(USDC_BASE, token, amount_raw, 0.01)
         if quote is None:
             print("❌ OKX 报价失败，检查 API Key 和网络")
             return
@@ -74,7 +79,7 @@ async def test_pipeline(live: bool):
         print(f"STEP 2: 交易构建")
         print(f"{'='*50}")
 
-        tx_data = await okx.build_swap_tx(USDC_BASE, TOKEN, amount_raw, cfg.wallet_address, 0.01)
+        tx_data = await okx.build_swap_tx(USDC_BASE, token, amount_raw, cfg.wallet_address, 0.01)
         if tx_data is None:
             print("❌ 交易构建失败")
             return
@@ -113,7 +118,7 @@ async def test_pipeline(live: bool):
         # ── Step 4: 执行买入 ──
         if live:
             print(f"\n{'='*50}")
-            print(f"STEP 4: 执行买入  {AMOUNT_USDC} USDC → {TOKEN[:10]}")
+            print(f"STEP 4: 执行买入  {AMOUNT_USDC} USDC → {token[:10]}")
             print(f"{'='*50}")
 
             trader = Trader(
@@ -127,7 +132,7 @@ async def test_pipeline(live: bool):
             )
 
             tx_hash, filled_raw = await trader.buy(
-                TOKEN, amount_raw,
+                token, amount_raw,
                 payment_token=USDC_BASE, payment_decimals=6,
                 source_tx=f"test_0.1u",
             )

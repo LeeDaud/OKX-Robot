@@ -101,3 +101,48 @@ export interface BalancesResponse {
   base_token: string
   wallet_address: string
 }
+
+// ── Grid 策略类型 ─────────────────────────────────────────
+
+export interface GridSlotData {
+  slot_id: number
+  buy_price: number
+  sell_price: number
+  amount_usdc: number
+  status: "idle" | "bought"
+  filled_amount: number
+  current_value_usd: number | null
+  unrealized_pnl: number | null
+  roi_pct: number | null
+}
+
+export interface GridState {
+  enabled: boolean
+  token: string
+  token_symbol: string
+  current_price: number | null
+  total_investment: number
+  total_slots: number
+  active_slots: number
+  realized_pnl: number
+  unrealized_pnl: number
+  total_pnl: number
+  slots: GridSlotData[]
+  updated_at: string
+}
+
+export interface GridTradeRecord {
+  tx_hash: string
+  side: "buy" | "sell"
+  token_address: string
+  amount_out_raw: number
+  amount_in_raw: number
+  cost_usd: number
+  pnl_usd: number
+  roi_pct: number
+  created_at: string
+}
+
+export interface GridHistoryResponse {
+  trades: GridTradeRecord[]
+}

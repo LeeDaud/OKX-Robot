@@ -9,6 +9,7 @@ import Params from "@/pages/Params";
 import WalletPage from "@/pages/Wallet";
 import Trades from "@/pages/Trades";
 import Positions from "@/pages/Positions";
+import Grid from "@/pages/Grid";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,6 +28,7 @@ export default function App() {
               <Route path="/wallets" element={<Wallets />} />
               <Route path="/params" element={<Params />} />
               <Route path="/wallet" element={<WalletPage />} />
+              <Route path="/grid" element={<Grid />} />
               <Route path="/positions" element={<Positions />} />
               <Route path="/trades" element={<Trades />} />
             </Route>

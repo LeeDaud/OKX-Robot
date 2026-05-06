@@ -111,8 +111,7 @@ class GridStrategy:
                 await self._sell(slot)
                 changed = True
 
-        if changed:
-            self._save_state()
+        self._save_state()
 
     async def _get_price(self) -> Optional[float]:
         """通过 OKX 估算代币的 USDC 价格。"""
@@ -226,7 +225,8 @@ class GridStrategy:
                     "filled_amount": s.filled_amount,
                 }
                 for s in self._slots
-            ]
+            ],
+            "grid_current_price": self._current_price,
         })
 
     def _load_state(self) -> Optional[list[GridSlot]]:

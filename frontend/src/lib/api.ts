@@ -1,4 +1,4 @@
-import type { AppConfig, WalletInfo, TradeRecord, TradeStats, Position, PositionAllResponse, CopyTarget, BalancesResponse } from '@/types/api'
+import type { AppConfig, WalletInfo, TradeRecord, TradeStats, Position, PositionAllResponse, CopyTarget, BalancesResponse, GridState, GridHistoryResponse } from '@/types/api'
 
 const BASE = '/api'
 
@@ -89,4 +89,13 @@ export function refreshPositionsPrices(): Promise<{
 
 export function fetchBalances(): Promise<BalancesResponse> {
   return request('/config/balances')
+}
+
+// Grid
+export function fetchGridState(): Promise<GridState> {
+  return request('/grid/state')
+}
+
+export function fetchGridHistory(): Promise<GridHistoryResponse> {
+  return request('/grid/history')
 }

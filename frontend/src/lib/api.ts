@@ -1,4 +1,4 @@
-import type { AppConfig, WalletInfo, TradeRecord, TradeStats, Position, PositionAllResponse, CopyTarget, BalancesResponse, GridState, GridHistoryResponse, StrategyFilter } from '@/types/api'
+import type { AppConfig, WalletInfo, TradeRecord, TradeStats, Position, PositionAllResponse, CopyTarget, BalancesResponse, GridState, GridHistoryResponse, AeroState, StrategyFilter } from '@/types/api'
 
 const BASE = '/api'
 
@@ -107,4 +107,9 @@ export function fetchGridState(): Promise<GridState> {
 
 export function fetchGridHistory(): Promise<GridHistoryResponse> {
   return request('/grid/history')
+}
+
+// AERO Trend
+export function fetchAeroState(): Promise<AeroState> {
+  return request('/aero/state')
 }

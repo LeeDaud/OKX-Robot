@@ -122,6 +122,9 @@ export default function Positions({ strategy }: { strategy?: StrategyFilter }) {
     // Grid strategy: strategy starts with "grid"
     open = open.filter((p: any) => p.strategy && p.strategy.startsWith("grid"));
     closed = closed.filter((p: any) => p.strategy && p.strategy.startsWith("grid"));
+  } else if (strategy === "aero_trend") {
+    open = open.filter((p: any) => p.strategy === "aero_trend");
+    closed = closed.filter((p: any) => p.strategy === "aero_trend");
   }
 
   const summary = data?.summary;

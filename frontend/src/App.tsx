@@ -11,6 +11,7 @@ import WalletPage from "@/pages/Wallet";
 import Trades from "@/pages/Trades";
 import Positions from "@/pages/Positions";
 import Grid from "@/pages/Grid";
+import AeroTrend from "@/pages/AeroTrend";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -36,12 +37,15 @@ export default function App() {
               <Route path="/params" element={<Params />} />
               <Route path="/wallet" element={<WalletPage />} />
               <Route path="/grid" element={<Grid />} />
+              <Route path="/aero" element={<AeroTrend />} />
               <Route path="/positions" element={<Positions />} />
               <Route path="/positions/copy" element={<Positions strategy="copy" />} />
               <Route path="/positions/grid" element={<Positions strategy="grid" />} />
+              <Route path="/positions/aero" element={<Positions strategy="aero_trend" />} />
               <Route path="/trades" element={<Trades />} />
               <Route path="/trades/copy" element={<Trades strategy="copy" />} />
               <Route path="/trades/grid" element={<Trades strategy="grid" />} />
+              <Route path="/trades/aero" element={<Trades strategy="aero_trend" />} />
             </Route>
           </Routes>
         </BrowserRouter>

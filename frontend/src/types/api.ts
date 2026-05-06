@@ -101,7 +101,26 @@ export interface TradeRecord {
   strategy: string
 }
 
-export type StrategyFilter = 'all' | 'copy' | 'grid' | 'dca' | 'buyback'
+export type StrategyFilter = 'all' | 'copy' | 'grid' | 'dca' | 'buyback' | 'aero_trend'
+
+// ── AERO 趋势策略类型 ────────────────────────────────────
+
+export interface AeroState {
+  has_position: boolean
+  entry_price: number
+  current_price: number
+  position_amount: number
+  cost_basis_usdc: number
+  pnl_pct: number
+  highest_price: number
+  holding_time_minutes: number
+  take_profit_1_done: boolean
+  take_profit_2_done: boolean
+  trailing_stop_active: boolean
+  consecutive_losses: number
+  entry_time: string
+  buy_tx_hash: string
+}
 
 export interface TradeStats {
   today: { total: number; success: number; pnl: number }

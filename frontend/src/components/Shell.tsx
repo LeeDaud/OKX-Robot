@@ -7,6 +7,7 @@ import {
   History,
   Package,
   Grid3x3,
+  TrendingUp,
   MoonStar,
   SunMedium,
   RefreshCcw,
@@ -44,6 +45,14 @@ const navGroups = [
       { to: "/grid", label: "网格策略", icon: Grid3x3 },
       { to: "/positions/grid", label: "实时持仓", icon: Package },
       { to: "/trades/grid", label: "交易记录", icon: History },
+    ],
+  },
+  {
+    label: "趋势",
+    items: [
+      { to: "/aero", label: "AERO 趋势", icon: TrendingUp },
+      { to: "/positions/aero", label: "实时持仓", icon: Package },
+      { to: "/trades/aero", label: "交易记录", icon: History },
     ],
   },
 ];

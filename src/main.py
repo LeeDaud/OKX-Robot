@@ -26,6 +26,9 @@ from src.executor.trader import Trader, USDC_BASE
 from src.monitor.buyback import BuybackMonitor, BuybackEvent
 from src.notify.feishu import FeishuNotifier
 from src.strategy.grid import GridStrategy
+from src.strategy.unicorn_sniper import UnicornSniper
+from src.strategy.whale_exit_guard import WhaleExitGuard
+from src.strategy.virtuals_client import VirtualsClubClient
 from src.risk.guard import DailyLossGuard
 from src.risk.take_profit import TakeProfitMonitor
 from src.rpc.router import RPCRouter
@@ -480,6 +483,44 @@ async def run(dry_run_override: bool | None = None) -> None:
                     logger.error("[GRID] tick 异常: %s", e)
                 await asyncio.sleep(cfg.poll_interval_sec)
 
+        # ── Sniper 狙击策略 ─────────────────────────────────────────
+
+        sniper_ok = False
+        sniper_strategy = None
+        if cfg.sniper.enabled:
+            vclub = VirtualsClubClient(
+                base_url=cfg.sniper.virtuals_club_url,
+                email=cfg.sniper.email,
+                password=cfg.sniper.password,
+                leaderboard_path=cfg.sniper.leaderboard_path,
+            )
+            whale_guard = WhaleExitGuard(
+                exit_threshold_pct=1.5,
+                warn_threshold_pct=2.0,
+                max_concentration_pct=cfg.sniper.max_concentration_pct,
+            )
+            sniper_strategy = UnicornSniper(
+                vclub=vclub, w3=w3, okx=okx, trader=trader,
+                config=cfg.sniper, guard=whale_guard,
+                notifier=notifier, state_mgr=state_mgr,
+                dry_run=cfg.dry_run,
+            )
+            sniper_ok = await sniper_strategy.initialize()
+            if not sniper_ok:
+                logger.warning("[SNIPER] 初始化失败，跳过狙击策略")
+        else:
+            logger.info("[SNIPER] 未启用，跳过")
+
+        async def sniper_loop(stop: asyncio.Event):
+            if not sniper_ok:
+                return
+            while not stop.is_set():
+                try:
+                    await sniper_strategy.tick()
+                except Exception as e:
+                    logger.error("[SNIPER] tick 异常: %s", e)
+                await asyncio.sleep(cfg.sniper.poll_interval_sec)
+
         # 启动
         stop_event = asyncio.Event()
         def _shutdown(*_):
@@ -496,6 +537,7 @@ async def run(dry_run_override: bool | None = None) -> None:
             asyncio.create_task(tp_monitor.start()),
             asyncio.create_task(hourly_reporter(stop_event)),
             asyncio.create_task(grid_loop(stop_event)),
+            asyncio.create_task(sniper_loop(stop_event)),
         ]
 
         await stop_event.wait()

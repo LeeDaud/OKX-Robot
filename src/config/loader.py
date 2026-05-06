@@ -44,6 +44,22 @@ class GridConfig:
 
 
 @dataclass
+class SniperConfig:
+    enabled: bool = False
+    virtuals_club_url: str = "https://virtuals.club"
+    email: str = ""
+    password: str = ""
+    leaderboard_path: str = "/api/public/leaderboard"
+    buy_amount_usdc: float = 20
+    min_window_sec: int = 60
+    max_window_sec: int = 5880
+    max_concentration_pct: float = 40
+    poll_interval_sec: int = 30
+    max_active_targets: int = 3
+    leaderboard_top_n: int = 50
+
+
+@dataclass
 class Config:
     # 必填字段（无默认值，必须在前）
     rpc_http_url: str
@@ -57,6 +73,7 @@ class Config:
     dca: DcaConfig = field(default_factory=DcaConfig)
     deep_buy: DeepBuyConfig = field(default_factory=DeepBuyConfig)
     grid: GridConfig = field(default_factory=GridConfig)
+    sniper: SniperConfig = field(default_factory=SniperConfig)
     buyback_watch: dict[str, str] = field(default_factory=dict)
     base_token: str = "VIRTUAL"
     daily_loss_limit_usd: float = 10
@@ -113,15 +130,36 @@ def _parse_grid(raw: dict | None) -> GridConfig:
     )
 
 
+def _parse_sniper(raw: dict | None) -> SniperConfig:
+    if not raw:
+        return SniperConfig(enabled=False)
+    return SniperConfig(
+        enabled=bool(raw.get("enabled", True)),
+        virtuals_club_url=str(raw.get("virtuals_club_url", "https://virtuals.club")).rstrip("/"),
+        email=str(raw.get("email", "")),
+        password=str(raw.get("password", "")),
+        leaderboard_path=str(raw.get("leaderboard_path", "/api/public/leaderboard")),
+        buy_amount_usdc=float(raw.get("buy_amount_usdc", 20)),
+        min_window_sec=int(raw.get("min_window_sec", 60)),
+        max_window_sec=int(raw.get("max_window_sec", 5880)),
+        max_concentration_pct=float(raw.get("max_concentration_pct", 40)),
+        poll_interval_sec=int(raw.get("poll_interval_sec", 30)),
+        max_active_targets=int(raw.get("max_active_targets", 3)),
+        leaderboard_top_n=int(raw.get("leaderboard_top_n", 50)),
+    )
+
+
 def _parse_yaml(y: dict) -> dict:
     raw_buyback = y.get("buyback_watch", {}) or {}
     dca_raw = y.get("dca")
     deep_buy_raw = y.get("deep_buy")
     grid_raw = y.get("grid")
+    sniper_raw = y.get("sniper")
     return dict(
         dca=_parse_dca(dca_raw),
         deep_buy=_parse_deep_buy(deep_buy_raw),
         grid=_parse_grid(grid_raw),
+        sniper=_parse_sniper(sniper_raw),
         buyback_watch={k.lower(): v.lower() for k, v in raw_buyback.items()},
         base_token=str(y.get("base_token", "VIRTUAL")).upper(),
         daily_loss_limit_usd=float(y.get("daily_loss_limit_usd", 10)),

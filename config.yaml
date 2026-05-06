@@ -26,6 +26,20 @@ grid:
   investment_usdc: 8     # 总投入（均分到每个位）
   profit_pct: 3.0        # 每个位的目标利润率
 
+# Unicorn 打新狙击策略
+sniper:
+  enabled: false
+  virtuals_club_url: "https://virtuals.club"
+  email: ""                    # virtuals.club 登录邮箱
+  password: ""                 # virtuals.club 登录密码
+  leaderboard_path: "/api/public/leaderboard"  # 朋友添加的公开接口
+  buy_amount_usdc: 20          # 每笔狙击买入金额
+  min_window_sec: 60           # 最小 Anti-Sniper 窗口
+  max_concentration_pct: 40    # 最大允许大户集中度（超过跳过）
+  poll_interval_sec: 30
+  max_active_targets: 3
+  leaderboard_top_n: 50
+
 # 回购地址簿：回购地址买入指定代币时，立即卖出对应持仓
 buyback_watch:
   "0x9Bda49389B29Fa4E204eD9De8f3d7d06f84dA171": "0xc2bceb0ee69455da32abb10a5ba81c0299a925c8"

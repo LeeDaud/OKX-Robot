@@ -146,10 +146,10 @@ async def handle_grid_state(request: web.Request) -> web.Response:
 
     return json_ok({
         "enabled": grid_enabled,
-        "token": grid_config.get("token", ""),
+        "token": grid_cfg.get("token", ""),
         "token_symbol": "AERO",
         "current_price": round(current_price, 8) if current_price else None,
-        "total_investment": grid_config.get("investment_usdc", 0),
+        "total_investment": grid_cfg.get("investment_usdc", 0),
         "total_slots": len(slots),
         "active_slots": active,
         "realized_pnl": round(realized_pnl, 4),

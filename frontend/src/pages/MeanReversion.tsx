@@ -1,10 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchMeanReversionState } from "@/lib/api";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchMeanReversionState, toggleExecution } from "@/lib/api";
 import type { MeanReversionState, MrSymbolState } from "@/types/api";
 import { PageHeader, MetricCard, SectionCard, StatusBadge, LoadingState, EmptyState } from "@/components/app-primitives";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Check, X, TrendingUp, Minus, AlertTriangle } from "lucide-react";
+import { Check, X, TrendingUp, Minus, AlertTriangle, Power, PowerOff } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 function formatPrice(v: number): string {
@@ -175,11 +177,21 @@ function IndicatorGrid({ symbol }: { symbol: MrSymbolState }) {
 }
 
 export default function MeanReversion() {
+  const qc = useQueryClient();
   const { data: state, isLoading } = useQuery<MeanReversionState>({
     queryKey: ["mean-reversion-state"],
     queryFn: fetchMeanReversionState,
     refetchInterval: 30000,
     staleTime: 15000,
+  });
+
+  const toggleMut = useMutation({
+    mutationFn: toggleExecution,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["mean-reversion-state"] });
+      toast.success("策略状态已切换");
+    },
+    onError: (e: Error) => toast.error(`切换失败: ${e.message}`),
   });
 
   if (isLoading) return <LoadingState label="正在加载均值回归策略..." />;
@@ -202,6 +214,41 @@ export default function MeanReversion() {
         <StatusBadge ok={state.consecutive_losses < Number(state.config?.consecutive_loss_pause ?? 3)} label="连续亏损" hint={`${state.consecutive_losses}/${state.config?.consecutive_loss_pause ?? 3}`} />
         <StatusBadge ok={state.daily_open_count < Number(state.config?.max_daily_open ?? 2)} label="今日开仓" hint={`${state.daily_open_count}/${state.config?.max_daily_open ?? 2}`} />
         <StatusBadge ok={totalPositions < Number(state.config?.max_positions ?? 6)} label="当前持仓" hint={`${totalPositions}/${state.config?.max_positions ?? 6}`} />
+      </section>
+
+      {/* ── 策略开关 ── */}
+      <section>
+        <div className="mb-4 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border/40" />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/60">
+            策略控制
+          </span>
+          <div className="h-px flex-1 bg-border/40" />
+        </div>
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">均值回归策略开关</p>
+                <p className="text-xs text-muted-foreground">
+                  {state.enabled
+                    ? "策略运行中，系统将根据 RSI + MACD + 价格百分位信号自动交易"
+                    : "策略已关闭，不执行任何买入或卖出操作"}
+                </p>
+              </div>
+              <Button
+                variant={state.enabled ? "default" : "outline"}
+                size="sm"
+                disabled={toggleMut.isPending}
+                onClick={() => toggleMut.mutate({ mean_reversion_enabled: !state.enabled })}
+                className="shrink-0"
+              >
+                {state.enabled ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                {state.enabled ? "运行中" : "已停止"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </section>
 
       {/* ── 持仓面板 ── */}

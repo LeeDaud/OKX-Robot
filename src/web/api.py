@@ -459,6 +459,13 @@ async def handle_toggle_execution(request: web.Request):
         cfg["grid"]["volatility_adjust"] = bool(data["grid_volatility_adjust"])
         updated.append("grid_volatility_adjust")
 
+    # 切换 mean_reversion.enabled
+    if "mean_reversion_enabled" in data:
+        if "mean_reversion" not in cfg:
+            cfg["mean_reversion"] = {}
+        cfg["mean_reversion"]["enabled"] = bool(data["mean_reversion_enabled"])
+        updated.append("mean_reversion_enabled")
+
     # 切换 dry_run
     if "dry_run" in data:
         cfg["dry_run"] = bool(data["dry_run"])

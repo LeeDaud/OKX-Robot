@@ -85,7 +85,7 @@ class AeroTrendConfig:
 @dataclass
 class ContractConfig:
     enabled: bool = False
-    pairs: list[str] = field(default_factory=lambda: ["BTC-USDT-SWAP", "ETH-USDT-SWAP"])
+    pairs: list[str] = field(default_factory=lambda: ["BTC/USDC", "ETH/USDC"])
     default_leverage: int = 3
     max_leverage_main: int = 5
     max_leverage_alt: int = 3
@@ -189,7 +189,7 @@ def _parse_contract(raw: dict | None) -> ContractConfig:
         return ContractConfig(enabled=False)
     return ContractConfig(
         enabled=bool(raw.get("enabled", True)),
-        pairs=list(raw.get("pairs", ["BTC-USDT-SWAP", "ETH-USDT-SWAP"])),
+        pairs=list(raw.get("pairs", ["BTC/USDC", "ETH/USDC"])),
         default_leverage=int(raw.get("default_leverage", 3)),
         max_leverage_main=int(raw.get("max_leverage_main", 5)),
         max_leverage_alt=int(raw.get("max_leverage_alt", 3)),

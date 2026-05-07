@@ -34,17 +34,16 @@ aero_trend:
   position_size_pct: 0.05
   # 其余使用默认值
 
-# 永续合约交易（独立链路，与现货互不影响）
+# 永续合约交易（SynFutures V3，链上执行，与现货互不影响）
 contract:
   enabled: false
   pairs:
-    - BTC-USDT-SWAP
-    - ETH-USDT-SWAP
+    - BTC/USDC
+    - ETH/USDC
   default_leverage: 3
   max_leverage_main: 5           # 主流币（BTC/ETH）最大杠杆
   max_leverage_alt: 3            # 山寨币最大杠杆
   max_margin_per_position: 0.3   # 单品种保证金占比上限
-  funding_rate_threshold: 0.001  # 资金费率告警阈值
   maintenance_margin_multiplier: 2.0  # 维持保证金倍数
   poll_interval_sec: 30
 

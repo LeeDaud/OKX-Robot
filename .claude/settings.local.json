@@ -32,7 +32,11 @@
       "Bash(scp -o StrictHostKeyChecking=no \"D:\\\\AAA-Project\\\\015-Auto-Trader\\\\src\\\\web\\\\api.py\" root@66.63.173.143:/opt/auto-trader/src/web/api.py)",
       "Bash(npx vite *)",
       "Bash(npx svgo *)",
-      "Bash(env)"
+      "Bash(env)",
+      "WebFetch(domain:docs.synfutures.com)",
+      "WebFetch(domain:www.pikaprotocol.com)",
+      "WebFetch(domain:docs.pikaprotocol.com)",
+      "WebFetch(domain:basescan.org)"
     ]
   }
 }

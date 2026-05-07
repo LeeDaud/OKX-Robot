@@ -242,8 +242,24 @@ class Trader:
             self.last_skip_reason = "模拟运行模式"
             return None
 
-        return await self._send_swap(token_in, token_out, sell_amount,
-                                     source_tx=source_tx, stage="sell")
+        tx_hash = await self._send_swap(token_in, token_out, sell_amount,
+                                        source_tx=source_tx, stage="sell")
+        if not tx_hash:
+            return None
+
+        # 等待链上确认：确认交易被包含在区块中且 status=1
+        receipt = await self._wait_for_receipt(tx_hash)
+        if receipt is None:
+            self.last_skip_reason = "卖出交易未上链"
+            logger.warning("[SELL] tx=%s 未在链上找到", tx_hash[:12])
+            return None
+        if receipt.get("status") != 1:
+            self.last_skip_reason = "卖出交易链上失败"
+            logger.warning("[SELL] tx=%s 链上失败 status=%s", tx_hash[:12], receipt.get("status"))
+            return None
+
+        logger.info("[SELL OK] tx=%s confirmed on-chain", tx_hash[:12])
+        return tx_hash
 
     # ── 内部辅助 ─────────────────────────────────────────────────
 

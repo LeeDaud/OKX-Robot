@@ -83,6 +83,19 @@ class AeroTrendConfig:
 
 
 @dataclass
+class ContractConfig:
+    enabled: bool = False
+    pairs: list[str] = field(default_factory=lambda: ["BTC-USDT-SWAP", "ETH-USDT-SWAP"])
+    default_leverage: int = 3
+    max_leverage_main: int = 5
+    max_leverage_alt: int = 3
+    max_margin_per_position: float = 0.3           # 单品种最大保证金比例
+    funding_rate_threshold: float = 0.001           # 资金费率告警阈值
+    maintenance_margin_multiplier: float = 2.0      # 维持保证金倍数
+    poll_interval_sec: float = 30
+
+
+@dataclass
 class SniperConfig:
     enabled: bool = False
     virtuals_club_url: str = "https://virtuals.club"
@@ -114,6 +127,7 @@ class Config:
     grid: GridConfig = field(default_factory=GridConfig)
     aero_trend: AeroTrendConfig = field(default_factory=AeroTrendConfig)
     sniper: SniperConfig = field(default_factory=SniperConfig)
+    contract: ContractConfig = field(default_factory=ContractConfig)
     buyback_watch: dict[str, str] = field(default_factory=dict)
     base_token: str = "VIRTUAL"
     daily_loss_limit_usd: float = 10
@@ -167,6 +181,22 @@ def _parse_grid(raw: dict | None) -> GridConfig:
         max_slots=int(raw.get("max_slots", 12)),
         volatility_adjust=bool(raw.get("volatility_adjust", False)),
         volatility_window=int(raw.get("volatility_window", 20)),
+    )
+
+
+def _parse_contract(raw: dict | None) -> ContractConfig:
+    if not raw:
+        return ContractConfig(enabled=False)
+    return ContractConfig(
+        enabled=bool(raw.get("enabled", True)),
+        pairs=list(raw.get("pairs", ["BTC-USDT-SWAP", "ETH-USDT-SWAP"])),
+        default_leverage=int(raw.get("default_leverage", 3)),
+        max_leverage_main=int(raw.get("max_leverage_main", 5)),
+        max_leverage_alt=int(raw.get("max_leverage_alt", 3)),
+        max_margin_per_position=float(raw.get("max_margin_per_position", 0.3)),
+        funding_rate_threshold=float(raw.get("funding_rate_threshold", 0.001)),
+        maintenance_margin_multiplier=float(raw.get("maintenance_margin_multiplier", 2.0)),
+        poll_interval_sec=float(raw.get("poll_interval_sec", 30)),
     )
 
 
@@ -233,12 +263,14 @@ def _parse_yaml(y: dict) -> dict:
     deep_buy_raw = y.get("deep_buy")
     grid_raw = y.get("grid")
     aero_raw = y.get("aero_trend")
+    contract_raw = y.get("contract")
     sniper_raw = y.get("sniper")
     return dict(
         dca=_parse_dca(dca_raw),
         deep_buy=_parse_deep_buy(deep_buy_raw),
         grid=_parse_grid(grid_raw),
         aero_trend=_parse_aero(aero_raw),
+        contract=_parse_contract(contract_raw),
         sniper=_parse_sniper(sniper_raw),
         buyback_watch={k.lower(): v.lower() for k, v in raw_buyback.items()},
         base_token=str(y.get("base_token", "VIRTUAL")).upper(),

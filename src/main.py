@@ -22,6 +22,7 @@ from src.db.database import (
     get_today_pnl,
 )
 from src.executor.okx_client import OKXDexClient
+from src.executor.okx_cex_client import OKXCexClient
 from src.executor.trader import Trader, USDC_BASE
 from src.monitor.buyback import BuybackMonitor, BuybackEvent
 from src.notify.feishu import FeishuNotifier
@@ -32,6 +33,7 @@ from src.strategy.virtuals_client import VirtualsClubClient
 from src.strategy.aero_collector import AeroMarketCollector
 from src.strategy.aero_strategy import TrendStrategy
 from src.strategy.aero_position import PositionManager
+from src.strategy.mean_reversion import MeanReversionStrategy
 
 from src.risk.guard import DailyLossGuard
 from src.risk.take_profit import TakeProfitMonitor
@@ -704,6 +706,47 @@ async def run(dry_run_override: bool | None = None) -> None:
 
                 await asyncio.sleep(cfg.aero_trend.poll_interval_sec)
 
+        # ── 均值回归策略 ──────────────────────────────────────────────
+
+        mr_ok = False
+        mr_strategy = None
+        if cfg.mean_reversion.enabled:
+            try:
+                cex_client = OKXCexClient(
+                    cfg.okx_api_key, cfg.okx_secret_key, cfg.okx_passphrase,
+                )
+                await cex_client.__aenter__()
+                mr_strategy = MeanReversionStrategy(
+                    cfg=cfg.mean_reversion,
+                    cex_client=cex_client,
+                    trader=trader,
+                    guard=guard,
+                    state_mgr=state_mgr,
+                    notifier=notifier,
+                    w3=w3,
+                )
+                mr_ok = await mr_strategy.initialize()
+                if mr_ok:
+                    logger.info("[MR] 均值回归策略已初始化: %d 个标的, 轮询 %.0fs",
+                                len(cfg.mean_reversion.tokens),
+                                cfg.mean_reversion.poll_interval_sec)
+                else:
+                    logger.warning("[MR] 初始化失败，跳过")
+            except Exception as e:
+                logger.error("[MR] 初始化异常: %s", e)
+        else:
+            logger.info("[MR] 未启用，跳过")
+
+        async def mr_loop(stop: asyncio.Event):
+            if not mr_ok or mr_strategy is None:
+                return
+            while not stop.is_set():
+                try:
+                    await mr_strategy.tick()
+                except Exception as e:
+                    logger.error("[MR] tick 异常: %s", e)
+                await asyncio.sleep(cfg.mean_reversion.poll_interval_sec)
+
         # 启动
         stop_event = asyncio.Event()
         def _shutdown(*_):
@@ -722,12 +765,20 @@ async def run(dry_run_override: bool | None = None) -> None:
             asyncio.create_task(grid_loop(stop_event)),
             asyncio.create_task(sniper_loop(stop_event)),
             asyncio.create_task(aero_loop(stop_event)),
+            asyncio.create_task(mr_loop(stop_event)),
         ]
 
         await stop_event.wait()
 
         await buyback_monitor.stop()
         await tp_monitor.stop()
+        if mr_ok and mr_strategy:
+            await mr_strategy.close_all_positions("策略停止")
+        if mr_ok:
+            try:
+                await cex_client.__aexit__(None, None, None)
+            except Exception:
+                pass
         for t in tasks:
             t.cancel()
 

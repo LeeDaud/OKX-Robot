@@ -101,7 +101,65 @@ export interface TradeRecord {
   strategy: string
 }
 
-export type StrategyFilter = 'all' | 'copy' | 'grid' | 'dca' | 'buyback' | 'aero_trend'
+export type StrategyFilter = 'all' | 'copy' | 'grid' | 'dca' | 'buyback' | 'aero_trend' | 'mean_reversion'
+
+// ── 均值回归策略类型 ──────────────────────────────────
+
+export interface MrEntryCondition {
+  label: string
+  ok: boolean
+  current: number | boolean
+  threshold: string
+}
+
+export interface MrIndicators {
+  rsi: number
+  atr: number
+  macd_line: number
+  macd_signal: number
+  macd_golden_cross: boolean
+  sma_200: number
+  sma_200_direction: string
+  price_percentile_90d: number
+  current_price: number
+}
+
+export interface MrPosition {
+  symbol: string
+  token_address: string
+  entry_price: number
+  amount: number
+  cost_basis_usdc: number
+  current_price: number
+  position_value_usdc: number
+  pnl_pct: number
+  holding_hours: number
+  entry_signal: string
+  tp1_done: boolean
+  tp2_done: boolean
+  trailing_stop_active: boolean
+  entry_time: string
+  buy_tx_hash: string
+}
+
+export interface MrSymbolState {
+  symbol: string
+  has_position: boolean
+  position?: MrPosition
+  indicators: MrIndicators
+  entry_conditions: MrEntryCondition[]
+  signal_strength: string
+}
+
+export interface MeanReversionState {
+  enabled: boolean
+  symbols: MrSymbolState[]
+  consecutive_losses: number
+  paused_until: string | null
+  daily_open_count: number
+  daily_open_date: string
+  config: Record<string, number | string>
+}
 
 // ── AERO 趋势策略类型 ────────────────────────────────────
 
@@ -233,4 +291,62 @@ export interface GridTradeRecord {
 
 export interface GridHistoryResponse {
   trades: GridTradeRecord[]
+}
+
+// ── 合约交易类型 ─────────────────────────────────────
+
+export interface ContractPosition {
+  pair: string
+  side: "long" | "short"
+  size: number
+  size_usd: number
+  margin_usd: number
+  entry_notional: number
+  mark_price: number | null
+}
+
+export interface ContractBalances {
+  vault_usdc: number
+  wallet_usdc: number
+  total_usdc: number
+}
+
+export interface ContractState {
+  enabled: boolean
+  dry_run: boolean
+  pairs: string[]
+  default_leverage: number
+  max_leverage_main: number
+  max_leverage_alt: number
+  max_margin_per_position: number
+  funding_rate_threshold: number
+  positions: ContractPosition[]
+  balances: ContractBalances
+}
+
+export interface ContractOpenRequest {
+  pair: string
+  side: "long" | "short"
+  margin_usd: number
+  leverage: number
+}
+
+export interface ContractOpenResponse {
+  ok: boolean
+  pair: string
+  side: string
+  margin_usd: number
+  leverage: number
+  tx_hash: string | null
+  dry_run: boolean
+}
+
+export interface ContractCloseRequest {
+  pair: string
+}
+
+export interface ContractCloseResponse {
+  ok: boolean
+  pair: string
+  tx_hash: string | null
 }

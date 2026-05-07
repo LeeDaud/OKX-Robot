@@ -8,10 +8,12 @@ import {
   Package,
   Grid3x3,
   TrendingUp,
+  BarChart3,
   MoonStar,
   SunMedium,
   RefreshCcw,
   Menu,
+  ArrowLeftRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -53,6 +55,20 @@ const navGroups = [
       { to: "/aero", label: "AERO 趋势", icon: TrendingUp },
       { to: "/positions/aero", label: "实时持仓", icon: Package },
       { to: "/trades/aero", label: "交易记录", icon: History },
+    ],
+  },
+  {
+    label: "均值回归",
+    items: [
+      { to: "/mean-reversion", label: "策略面板", icon: BarChart3 },
+      { to: "/positions/mean-reversion", label: "实时持仓", icon: Package },
+      { to: "/trades/mean-reversion", label: "交易记录", icon: History },
+    ],
+  },
+  {
+    label: "合约",
+    items: [
+      { to: "/contract", label: "合约交易", icon: ArrowLeftRight },
     ],
   },
 ];

@@ -924,6 +924,21 @@ async def handle_aero_state(_request):
     })
 
 
+async def handle_mean_reversion_state(_request):
+    """GET /api/mean-reversion/state - 均值回归策略状态"""
+    state = _read_state()
+    mr_state = state.get("mean_reversion_state", {}) or {}
+    return json_ok({
+        "enabled": mr_state.get("enabled", False),
+        "symbols": mr_state.get("symbols", []),
+        "consecutive_losses": mr_state.get("consecutive_losses", 0),
+        "paused_until": mr_state.get("paused_until"),
+        "daily_open_count": mr_state.get("daily_open_count", 0),
+        "daily_open_date": mr_state.get("daily_open_date", ""),
+        "config": mr_state.get("config", {}),
+    })
+
+
 def _compute_aero_conditions(snap: dict, cfg: dict) -> dict:
     """计算条件达标状态，供前端展示。"""
     p = snap.get("price", 0)
@@ -996,6 +1011,148 @@ def _compute_aero_conditions(snap: dict, cfg: dict) -> dict:
     }
 
 
+# ── 合约交易 ──────────────────────────────────────────────
+
+
+def _get_contract_trader(app: web.Application):
+    """懒加载 ContractTrader 实例，存入 app 复用。"""
+    trader = app.get("contract_trader")
+    if trader is not None:
+        return trader
+    from src.executor.contract_trader import ContractTrader
+    from src.config.loader import load_config
+    from web3 import AsyncWeb3
+    try:
+        cfg = load_config()
+        if not cfg.contract.enabled:
+            return None
+        w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(cfg.rpc_http_url))
+        trader = ContractTrader(
+            w3=w3,
+            private_key=os.environ["PRIVATE_KEY"],
+            wallet_address=cfg.wallet_address,
+            default_leverage=cfg.contract.default_leverage,
+            max_leverage_main=cfg.contract.max_leverage_main,
+            max_leverage_alt=cfg.contract.max_leverage_alt,
+            dry_run=cfg.dry_run,
+        )
+        app["contract_trader"] = trader
+        return trader
+    except Exception as e:
+        logger.warning("[CONTRACT] Failed to init ContractTrader: %s", e)
+        return None
+
+
+async def handle_contract_state(request: web.Request) -> web.Response:
+    """GET /api/contract/state — 合约持仓、余额、配置。"""
+    from src.config.loader import load_config
+
+    cfg = load_config()
+    cc = cfg.contract
+
+    positions = []
+    balances = {"vault_usdc": 0, "wallet_usdc": 0, "total_usdc": 0}
+
+    trader = _get_contract_trader(request.app)
+    if trader:
+        try:
+            positions = await trader.get_positions() or []
+            bal = await trader.get_balance()
+            if bal:
+                balances = bal
+        except Exception as e:
+            logger.warning("[CONTRACT] state query error: %s", e)
+
+    return json_ok({
+        "enabled": cc.enabled,
+        "dry_run": cfg.dry_run,
+        "pairs": cc.pairs,
+        "default_leverage": cc.default_leverage,
+        "max_leverage_main": cc.max_leverage_main,
+        "max_leverage_alt": cc.max_leverage_alt,
+        "max_margin_per_position": cc.max_margin_per_position,
+        "funding_rate_threshold": cc.funding_rate_threshold,
+        "positions": positions,
+        "balances": balances,
+    })
+
+
+async def handle_contract_open(request: web.Request) -> web.Response:
+    """POST /api/contract/open — 开仓。"""
+    from src.config.loader import load_config
+
+    try:
+        data = await request.json()
+    except Exception:
+        return json_error("Invalid JSON", 400)
+
+    pair = (data.get("pair") or "").strip().upper()
+    if not pair:
+        return json_error("pair is required", 400)
+    side = (data.get("side") or "").strip().lower()
+    if side not in ("long", "short"):
+        return json_error("side must be 'long' or 'short'", 400)
+    margin_usd = float(data.get("margin_usd", 0))
+    if margin_usd <= 0:
+        return json_error("margin_usd must be > 0", 400)
+    leverage = int(data.get("leverage", 0))
+
+    cfg = load_config()
+    if not cfg.contract.enabled:
+        return json_error("Contract trading is not enabled", 400)
+
+    trader = _get_contract_trader(request.app)
+    if not trader:
+        return json_error("ContractTrader initialization failed", 500)
+
+    try:
+        if side == "long":
+            tx_hash = await trader.open_long(pair, margin_usd, leverage)
+        else:
+            tx_hash = await trader.open_short(pair, margin_usd, leverage)
+    except Exception as e:
+        logger.warning("[CONTRACT] open error: %s", e)
+        return json_error(f"Open position failed: {e}", 500)
+
+    return json_ok({
+        "ok": True,
+        "pair": pair,
+        "side": side,
+        "margin_usd": margin_usd,
+        "leverage": leverage,
+        "tx_hash": tx_hash,
+        "dry_run": cfg.dry_run,
+    })
+
+
+async def handle_contract_close(request: web.Request) -> web.Response:
+    """POST /api/contract/close — 平仓。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return json_error("Invalid JSON", 400)
+
+    pair = (data.get("pair") or "").strip().upper()
+    if not pair:
+        return json_error("pair is required", 400)
+
+    trader = _get_contract_trader(request.app)
+    if not trader:
+        return json_error("ContractTrader not initialized", 500)
+
+    try:
+        tx_hash = await trader.close_position(pair)
+    except Exception as e:
+        logger.warning("[CONTRACT] close error: %s", e)
+        return json_error(f"Close position failed: {e}", 500)
+
+    return json_ok({
+        "ok": True,
+        "pair": pair,
+        "tx_hash": tx_hash,
+    })
+
+
 def create_app() -> web.Application:
     app = web.Application()
 
@@ -1024,6 +1181,14 @@ def create_app() -> web.Application:
 
     # AERO 趋势策略
     app.router.add_get("/api/aero/state", handle_aero_state)
+
+    # 合约交易
+    app.router.add_get("/api/contract/state", handle_contract_state)
+    app.router.add_post("/api/contract/open", handle_contract_open)
+    app.router.add_post("/api/contract/close", handle_contract_close)
+
+    # 均值回归策略
+    app.router.add_get("/api/mean-reversion/state", handle_mean_reversion_state)
 
     # CORS preflight
     app.router.add_route("OPTIONS", "/api/{tail:.*}", _cors_preflight)

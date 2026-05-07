@@ -125,6 +125,9 @@ export default function Positions({ strategy }: { strategy?: StrategyFilter }) {
   } else if (strategy === "aero_trend") {
     open = open.filter((p: any) => p.strategy === "aero_trend");
     closed = closed.filter((p: any) => p.strategy === "aero_trend");
+  } else if (strategy === "mean_reversion") {
+    open = open.filter((p: any) => p.strategy && p.strategy.startsWith("mr_"));
+    closed = closed.filter((p: any) => p.strategy && p.strategy.startsWith("mr_"));
   }
 
   const summary = data?.summary;

@@ -15,6 +15,8 @@ const Trades = lazy(() => import("@/pages/Trades"));
 const Positions = lazy(() => import("@/pages/Positions"));
 const Grid = lazy(() => import("@/pages/Grid"));
 const AeroTrend = lazy(() => import("@/pages/AeroTrend"));
+const Contract = lazy(() => import("@/pages/Contract"));
+const MeanReversion = lazy(() => import("@/pages/MeanReversion"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,14 +43,18 @@ export default function App() {
               <Route path="/wallet" element={<Suspense fallback={<LoadingState label="加载中..." />}><WalletPage /></Suspense>} />
               <Route path="/grid" element={<Suspense fallback={<LoadingState label="加载中..." />}><Grid /></Suspense>} />
               <Route path="/aero" element={<Suspense fallback={<LoadingState label="加载中..." />}><AeroTrend /></Suspense>} />
+              <Route path="/contract" element={<Suspense fallback={<LoadingState label="加载中..." />}><Contract /></Suspense>} />
+              <Route path="/mean-reversion" element={<Suspense fallback={<LoadingState label="加载中..." />}><MeanReversion /></Suspense>} />
               <Route path="/positions" element={<Suspense fallback={<LoadingState label="加载中..." />}><Positions /></Suspense>} />
               <Route path="/positions/copy" element={<Suspense fallback={<LoadingState label="加载中..." />}><Positions strategy="copy" /></Suspense>} />
               <Route path="/positions/grid" element={<Suspense fallback={<LoadingState label="加载中..." />}><Positions strategy="grid" /></Suspense>} />
               <Route path="/positions/aero" element={<Suspense fallback={<LoadingState label="加载中..." />}><Positions strategy="aero_trend" /></Suspense>} />
+              <Route path="/positions/mean-reversion" element={<Suspense fallback={<LoadingState label="加载中..." />}><Positions strategy="mean_reversion" /></Suspense>} />
               <Route path="/trades" element={<Suspense fallback={<LoadingState label="加载中..." />}><Trades /></Suspense>} />
               <Route path="/trades/copy" element={<Suspense fallback={<LoadingState label="加载中..." />}><Trades strategy="copy" /></Suspense>} />
               <Route path="/trades/grid" element={<Suspense fallback={<LoadingState label="加载中..." />}><Trades strategy="grid" /></Suspense>} />
               <Route path="/trades/aero" element={<Suspense fallback={<LoadingState label="加载中..." />}><Trades strategy="aero_trend" /></Suspense>} />
+              <Route path="/trades/mean-reversion" element={<Suspense fallback={<LoadingState label="加载中..." />}><Trades strategy="mean_reversion" /></Suspense>} />
             </Route>
           </Routes>
         </BrowserRouter>

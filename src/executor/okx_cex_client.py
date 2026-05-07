@@ -69,6 +69,49 @@ class OKXCexClient:
         params = {"instId": inst_id}
         return await self._get(path, params)
 
+    async def get_candles(self, inst_id: str, bar: str = "1D",
+                          after: str = "", before: str = "",
+                          limit: str = "100") -> list[dict]:
+        """获取 K 线数据。
+
+        Args:
+            inst_id: 交易对，如 "BTC-USDT"
+            bar: 周期 "1m"/"3m"/"5m"/"15m"/"30m"/"1H"/"2H"/"4H"/"6H"/"12H"/"1D"/"1W"/"1M"
+            after: 筛选此时间戳之前的 K 线（更旧）
+            before: 筛选此时间戳之后的 K 线（更新）
+            limit: 数量上限，最大 300
+        Returns:
+            [[ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm], ...]
+        """
+        path = "/api/v5/market/candles"
+        params = {"instId": inst_id, "bar": bar, "limit": limit}
+        if after:
+            params["after"] = after
+        if before:
+            params["before"] = before
+        resp = await self._get_raw(path, params)
+        if resp and resp.get("code") == "0":
+            return resp.get("data", [])
+        return []
+
+    async def get_history_candles(self, inst_id: str, bar: str = "1D",
+                                   after: str = "", before: str = "",
+                                   limit: str = "100") -> list[dict]:
+        """获取历史 K 线数据（更早的行情数据）。
+
+        Args: 同 get_candles
+        """
+        path = "/api/v5/market/history-candles"
+        params = {"instId": inst_id, "bar": bar, "limit": limit}
+        if after:
+            params["after"] = after
+        if before:
+            params["before"] = before
+        resp = await self._get_raw(path, params)
+        if resp and resp.get("code") == "0":
+            return resp.get("data", [])
+        return []
+
     async def get_instruments(self, inst_type: str = "SWAP") -> list[dict]:
         """获取所有合约交易对信息（含 ctVal 面值、最小交易量等）。"""
         path = "/api/v5/public/instruments"

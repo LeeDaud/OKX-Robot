@@ -112,6 +112,34 @@ class SniperConfig:
 
 
 @dataclass
+class MeanReversionTokenConfig:
+    symbol: str                # OKX instrument ID, e.g. "BTC-USDT"
+    token_address: str         # Base 链上的代币合约地址
+
+
+@dataclass
+class MeanReversionConfig:
+    enabled: bool = False
+    tokens: list[MeanReversionTokenConfig] = field(default_factory=list)
+    position_size_strong: float = 0.03      # 强信号仓位 3%
+    position_size_medium: float = 0.015     # 中信号仓位 1.5%
+    atr_period: int = 14
+    atr_tp1_mult: float = 1.5              # T1 止盈 ATR 倍数
+    atr_tp2_mult: float = 3.0              # T2 止盈 ATR 倍数
+    atr_stop_mult: float = 1.0             # 硬止损 ATR 倍数
+    atr_trail_mult: float = 0.8            # 移动止损激活 ATR 倍数
+    max_positions: int = 6
+    max_daily_open: int = 2
+    time_stop_hours: int = 120             # 5 天时间止损
+    force_close_hours: int = 240           # 10 天强制平仓
+    consecutive_loss_pause: int = 3        # 连续亏损暂停次数
+    daily_loss_pct_limit: float = 0.03     # 单日最大亏损比例
+    black_swan_drop_pct: float = 0.15      # 黑天鹅跌幅阈值
+    pause_hours: int = 24                  # 暂停时长（小时）
+    poll_interval_sec: float = 300         # 轮询间隔 5 分钟
+
+
+@dataclass
 class Config:
     # 必填字段（无默认值，必须在前）
     rpc_http_url: str
@@ -128,6 +156,7 @@ class Config:
     aero_trend: AeroTrendConfig = field(default_factory=AeroTrendConfig)
     sniper: SniperConfig = field(default_factory=SniperConfig)
     contract: ContractConfig = field(default_factory=ContractConfig)
+    mean_reversion: MeanReversionConfig = field(default_factory=MeanReversionConfig)
     buyback_watch: dict[str, str] = field(default_factory=dict)
     base_token: str = "VIRTUAL"
     daily_loss_limit_usd: float = 10
@@ -257,6 +286,38 @@ def _parse_aero(raw: dict | None) -> AeroTrendConfig:
     )
 
 
+def _parse_mean_reversion(raw: dict | None) -> MeanReversionConfig:
+    if not raw:
+        return MeanReversionConfig(enabled=False)
+    tokens_raw = raw.get("tokens", [])
+    tokens = []
+    for t in tokens_raw:
+        tokens.append(MeanReversionTokenConfig(
+            symbol=str(t.get("symbol", "")),
+            token_address=str(t.get("token_address", "")).lower(),
+        ))
+    return MeanReversionConfig(
+        enabled=bool(raw.get("enabled", True)),
+        tokens=tokens,
+        position_size_strong=float(raw.get("position_size_strong", 0.03)),
+        position_size_medium=float(raw.get("position_size_medium", 0.015)),
+        atr_period=int(raw.get("atr_period", 14)),
+        atr_tp1_mult=float(raw.get("atr_tp1_mult", 1.5)),
+        atr_tp2_mult=float(raw.get("atr_tp2_mult", 3.0)),
+        atr_stop_mult=float(raw.get("atr_stop_mult", 1.0)),
+        atr_trail_mult=float(raw.get("atr_trail_mult", 0.8)),
+        max_positions=int(raw.get("max_positions", 6)),
+        max_daily_open=int(raw.get("max_daily_open", 2)),
+        time_stop_hours=int(raw.get("time_stop_hours", 120)),
+        force_close_hours=int(raw.get("force_close_hours", 240)),
+        consecutive_loss_pause=int(raw.get("consecutive_loss_pause", 3)),
+        daily_loss_pct_limit=float(raw.get("daily_loss_pct_limit", 0.03)),
+        black_swan_drop_pct=float(raw.get("black_swan_drop_pct", 0.15)),
+        pause_hours=int(raw.get("pause_hours", 24)),
+        poll_interval_sec=float(raw.get("poll_interval_sec", 300)),
+    )
+
+
 def _parse_yaml(y: dict) -> dict:
     raw_buyback = y.get("buyback_watch", {}) or {}
     dca_raw = y.get("dca")
@@ -264,6 +325,7 @@ def _parse_yaml(y: dict) -> dict:
     grid_raw = y.get("grid")
     aero_raw = y.get("aero_trend")
     contract_raw = y.get("contract")
+    mean_reversion_raw = y.get("mean_reversion")
     sniper_raw = y.get("sniper")
     return dict(
         dca=_parse_dca(dca_raw),
@@ -271,6 +333,7 @@ def _parse_yaml(y: dict) -> dict:
         grid=_parse_grid(grid_raw),
         aero_trend=_parse_aero(aero_raw),
         contract=_parse_contract(contract_raw),
+        mean_reversion=_parse_mean_reversion(mean_reversion_raw),
         sniper=_parse_sniper(sniper_raw),
         buyback_watch={k.lower(): v.lower() for k, v in raw_buyback.items()},
         base_token=str(y.get("base_token", "VIRTUAL")).upper(),

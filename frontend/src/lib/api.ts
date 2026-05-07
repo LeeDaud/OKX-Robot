@@ -1,4 +1,4 @@
-import type { AppConfig, WalletInfo, TradeRecord, TradeStats, Position, PositionAllResponse, CopyTarget, BalancesResponse, GridState, GridHistoryResponse, AeroState, StrategyFilter } from '@/types/api'
+import type { AppConfig, WalletInfo, TradeRecord, TradeStats, Position, PositionAllResponse, CopyTarget, BalancesResponse, GridState, GridHistoryResponse, AeroState, ContractState, ContractOpenRequest, ContractOpenResponse, ContractCloseRequest, ContractCloseResponse, StrategyFilter, MeanReversionState } from '@/types/api'
 
 const BASE = '/api'
 
@@ -112,4 +112,29 @@ export function fetchGridHistory(): Promise<GridHistoryResponse> {
 // AERO Trend
 export function fetchAeroState(): Promise<AeroState> {
   return request('/aero/state')
+}
+
+// 均值回归
+export function fetchMeanReversionState(): Promise<MeanReversionState> {
+  return request('/mean-reversion/state')
+}
+
+// ── 合约交易 ────────────────────────────────────────
+
+export function fetchContractState(): Promise<ContractState> {
+  return request('/contract/state')
+}
+
+export function openContractPosition(data: ContractOpenRequest): Promise<ContractOpenResponse> {
+  return request('/contract/open', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export function closeContractPosition(data: ContractCloseRequest): Promise<ContractCloseResponse> {
+  return request('/contract/close', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
 }

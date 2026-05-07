@@ -14,6 +14,7 @@ const strategyOptions: { value: StrategyFilter; label: string }[] = [
   { value: "copy", label: "跟单" },
   { value: "grid", label: "网格" },
   { value: "aero_trend", label: "AERO 趋势" },
+  { value: "mean_reversion", label: "均值回归" },
   { value: "dca", label: "DCA" },
   { value: "buyback", label: "回购卖" },
 ];
@@ -24,6 +25,9 @@ const strategyLabels: Record<string, string> = {
   grid_buy: "网格",
   grid_sell: "网格",
   aero_trend: "AERO 趋势",
+  mean_reversion: "均值回归",
+  mr_strong: "均值回归",
+  mr_medium: "均值回归",
   dca: "DCA",
   deep_buy: "DCA",
   buyback_sell: "回购卖",

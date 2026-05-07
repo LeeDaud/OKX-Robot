@@ -47,6 +47,31 @@ contract:
   maintenance_margin_multiplier: 2.0  # 维持保证金倍数
   poll_interval_sec: 30
 
+# 双锚稳定套利策略：均值回归，90天价格百分位 + RSI + MACD 入场，ATR 自适应出场
+mean_reversion:
+  enabled: false
+  tokens:
+    - symbol: "BTC-USDT"
+      token_address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"  # cbBTC
+    - symbol: "ETH-USDT"
+      token_address: "0x4200000000000000000000000000000000000006"  # WETH
+  position_size_strong: 0.03       # 强信号 3%
+  position_size_medium: 0.015      # 中信号 1.5%
+  atr_period: 14
+  atr_tp1_mult: 1.5
+  atr_tp2_mult: 3.0
+  atr_stop_mult: 1.0
+  atr_trail_mult: 0.8
+  max_positions: 6
+  max_daily_open: 2
+  time_stop_hours: 120             # 5 天
+  force_close_hours: 240           # 10 天
+  consecutive_loss_pause: 3
+  daily_loss_pct_limit: 0.03
+  black_swan_drop_pct: 0.15
+  pause_hours: 24
+  poll_interval_sec: 300           # 5 分钟
+
 # Unicorn 打新狙击策略
 sniper:
   enabled: false

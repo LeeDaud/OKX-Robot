@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, type ElementType } from "react";
 import { AlertCircle, ArrowRight, CheckCircle2, Clock3, LoaderCircle, ShieldAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
@@ -38,12 +38,15 @@ export function MetricCard({
   value,
   hint,
   tone = "default",
+  icon: Icon,
 }: {
   label: string;
   value: string;
   hint: string;
   tone?: "default" | "success" | "warning" | "danger";
+  icon?: ElementType;
 }) {
+  const IconComponent = Icon;
   const accentClass =
     tone === "success"
       ? "from-[color:var(--metric-success-from)] to-[color:var(--metric-success-to)] text-[color:var(--metric-success-text)]"
@@ -56,7 +59,10 @@ export function MetricCard({
   return (
     <Card className={cn("overflow-hidden", tone === "default" ? "" : "border-transparent")}>
       <CardContent className={cn("bg-gradient-to-br px-5 py-5", accentClass)}>
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          {IconComponent && <IconComponent className="size-4" />}
+          {label}
+        </div>
         <div className="mt-3 text-3xl font-semibold tracking-[-0.04em]">{value}</div>
         <div className="mt-2 text-sm text-muted-foreground">{hint}</div>
       </CardContent>

@@ -4,7 +4,7 @@ import type { MeanReversionState, MrSymbolState } from "@/types/api";
 import { PageHeader, MetricCard, SectionCard, StatusBadge, LoadingState, EmptyState } from "@/components/app-primitives";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Check, X, TrendingUp, TrendingDown, Minus, AlertTriangle } from "lucide-react";
+import { Check, X, TrendingUp, Minus, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function formatPrice(v: number): string {

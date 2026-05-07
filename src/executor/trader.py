@@ -69,6 +69,8 @@ ERC20_BALANCE_ABI = [
 
 GAS_LIMIT_MULTIPLIER = 1.2
 MAX_UINT256 = 2**256 - 1
+MAX_BUY_RETRIES = 2
+MAX_SELL_RETRIES = 2
 
 # 基础代币配置：address → (decimals, symbol)
 BASE_TOKEN_CONFIG = {
@@ -121,7 +123,7 @@ class Trader:
     ) -> tuple[Optional[str], int]:
         """
         买入代币：用 payment_token 换取目标代币。
-        默认用 USDC（6 decimals）支付。
+        默认用 USDC（6 decimals）支付。链上执行失败时自动重试。
 
         Args:
             token_address: 目标代币地址
@@ -140,48 +142,79 @@ class Trader:
             self.last_skip_reason = "买入金额 <= 0"
             return (None, 0)
 
-        if not await self._check_gas():
-            return (None, 0)
-
-        quote = await self._okx.get_quote(
-            payment_token, token_address, amount_in, self._slippage
-        )
-        if quote is None:
-            self.last_skip_reason = "OKX 无可用买入报价"
-            logger.warning("[SKIP BUY] %s", self.last_skip_reason)
-            return (None, 0)
-
-        try:
-            self._validate_quote(quote)
-        except ValueError as e:
-            self.last_skip_reason = f"报价校验不通过: {e}"
-            logger.warning("[SKIP BUY] %s", self.last_skip_reason)
-            return (None, 0)
-
         amount_base = amount_in / (10 ** payment_decimals)
-        logger.info(
-            "[%s] BUY %s with %.4f %s | expected_out=%s",
-            "DRY-RUN" if self._dry_run else "LIVE",
-            token_address[:10], amount_base,
-            "USDC" if payment_token == USDC_BASE.lower() or payment_token == USDC_BASE else "TOKEN",
-            quote.get("toTokenAmount", "?"),
-        )
 
-        if self._dry_run:
-            return (None, 0)
+        for attempt in range(1 + MAX_BUY_RETRIES):
+            if attempt > 0:
+                delay = 2 * attempt
+                logger.info("[RETRY] Buy %s attempt %d/%d (wait %ds)",
+                            token_address[:10], attempt + 1, MAX_BUY_RETRIES + 1, delay)
+                await asyncio.sleep(delay)
 
-        tx_hash = await self._send_swap(payment_token, token_address, amount_in,
-                                         source_tx=source_tx, stage="buy")
-        if not tx_hash:
-            return (None, 0)
+            if not await self._check_gas():
+                if attempt < MAX_BUY_RETRIES:
+                    continue
+                return (None, 0)
 
-        filled_raw = await self._confirm_and_parse(tx_hash, token_address)
-        if filled_raw > 0:
-            logger.info("[BUY OK] tx=%s filled=%d", tx_hash[:12], filled_raw)
-        else:
-            logger.warning("[BUY WARN] tx=%s: no token received", tx_hash[:12])
+            quote = await self._okx.get_quote(
+                payment_token, token_address, amount_in, self._slippage
+            )
+            if quote is None:
+                self.last_skip_reason = "OKX 无可用买入报价"
+                if attempt < MAX_BUY_RETRIES:
+                    logger.warning("[SKIP BUY] %s（重试中...）", self.last_skip_reason)
+                    continue
+                logger.warning("[SKIP BUY] %s", self.last_skip_reason)
+                return (None, 0)
 
-        return (tx_hash, filled_raw)
+            try:
+                self._validate_quote(quote)
+            except ValueError as e:
+                self.last_skip_reason = f"报价校验不通过: {e}"
+                if attempt < MAX_BUY_RETRIES:
+                    logger.warning("[SKIP BUY] %s（重试中...）", self.last_skip_reason)
+                    continue
+                logger.warning("[SKIP BUY] %s", self.last_skip_reason)
+                return (None, 0)
+
+            logger.info(
+                "[%s] BUY %s with %.4f %s | expected_out=%s",
+                "DRY-RUN" if self._dry_run else "LIVE",
+                token_address[:10], amount_base,
+                "USDC" if payment_token == USDC_BASE.lower() or payment_token == USDC_BASE else "TOKEN",
+                quote.get("toTokenAmount", "?"),
+            )
+
+            if self._dry_run:
+                return (None, 0)
+
+            tx_hash = await self._send_swap(payment_token, token_address, amount_in,
+                                            source_tx=source_tx, stage="buy")
+            if not tx_hash:
+                if attempt < MAX_BUY_RETRIES:
+                    continue
+                return (None, 0)
+
+            receipt = await self._wait_for_receipt(tx_hash)
+            if receipt is None:
+                logger.warning("[BUY] tx=%s: receipt not found after 15s", tx_hash[:12])
+                return (tx_hash, 0)
+
+            if receipt.get("status") != 1:
+                logger.warning("[BUY FAIL] tx=%s on-chain（attempt %d/%d）",
+                               tx_hash[:12], attempt + 1, MAX_BUY_RETRIES + 1)
+                continue
+
+            filled_raw = self._parse_received_amount(receipt.get("logs", []), token_address)
+            if filled_raw > 0:
+                logger.info("[BUY OK] tx=%s filled=%d", tx_hash[:12], filled_raw)
+                return (tx_hash, filled_raw)
+
+            logger.warning("[BUY WARN] tx=%s: no transfer events", tx_hash[:12])
+            return (tx_hash, 0)
+
+        self.last_skip_reason = f"重试 {MAX_BUY_RETRIES} 次均失败"
+        return (None, 0)
 
     async def sell(
         self,
@@ -215,51 +248,71 @@ class Trader:
         if sell_amount > total_balance:
             sell_amount = total_balance
 
-        if not await self._check_gas():
-            return None
+        for attempt in range(1 + MAX_SELL_RETRIES):
+            if attempt > 0:
+                delay = 2 * attempt
+                logger.info("[RETRY] Sell %s attempt %d/%d (wait %ds)",
+                            token_in[:10], attempt + 1, MAX_SELL_RETRIES + 1, delay)
+                await asyncio.sleep(delay)
 
-        quote = await self._okx.get_quote(token_in, token_out, sell_amount, self._slippage)
-        if quote is None:
-            self.last_skip_reason = "OKX 无可用卖出报价"
-            logger.warning("[SKIP SELL] %s", self.last_skip_reason)
-            return None
+            if not await self._check_gas():
+                if attempt < MAX_SELL_RETRIES:
+                    continue
+                return None
 
-        try:
-            self._validate_quote(quote)
-        except ValueError as e:
-            self.last_skip_reason = f"卖出报价校验不通过: {e}"
-            logger.warning("[SKIP SELL] %s", self.last_skip_reason)
-            return None
+            quote = await self._okx.get_quote(token_in, token_out, sell_amount, self._slippage)
+            if quote is None:
+                self.last_skip_reason = "OKX 无可用卖出报价"
+                if attempt < MAX_SELL_RETRIES:
+                    logger.warning("[SKIP SELL] %s（重试中...）", self.last_skip_reason)
+                    continue
+                logger.warning("[SKIP SELL] %s", self.last_skip_reason)
+                return None
 
-        logger.info(
-            "[%s] SELL %s -> %s | amount=%d | expected_out=%s",
-            "DRY-RUN" if self._dry_run else "LIVE",
-            token_in[:10], token_out[:10], sell_amount,
-            quote.get("toTokenAmount", "?"),
-        )
+            try:
+                self._validate_quote(quote)
+            except ValueError as e:
+                self.last_skip_reason = f"卖出报价校验不通过: {e}"
+                if attempt < MAX_SELL_RETRIES:
+                    logger.warning("[SKIP SELL] %s（重试中...）", self.last_skip_reason)
+                    continue
+                logger.warning("[SKIP SELL] %s", self.last_skip_reason)
+                return None
 
-        if self._dry_run:
-            self.last_skip_reason = "模拟运行模式"
-            return None
+            logger.info(
+                "[%s] SELL %s -> %s | amount=%d | expected_out=%s",
+                "DRY-RUN" if self._dry_run else "LIVE",
+                token_in[:10], token_out[:10], sell_amount,
+                quote.get("toTokenAmount", "?"),
+            )
 
-        tx_hash = await self._send_swap(token_in, token_out, sell_amount,
-                                        source_tx=source_tx, stage="sell")
-        if not tx_hash:
-            return None
+            if self._dry_run:
+                self.last_skip_reason = "模拟运行模式"
+                return None
 
-        # 等待链上确认：确认交易被包含在区块中且 status=1
-        receipt = await self._wait_for_receipt(tx_hash)
-        if receipt is None:
-            self.last_skip_reason = "卖出交易未上链"
-            logger.warning("[SELL] tx=%s 未在链上找到", tx_hash[:12])
-            return None
-        if receipt.get("status") != 1:
-            self.last_skip_reason = "卖出交易链上失败"
-            logger.warning("[SELL] tx=%s 链上失败 status=%s", tx_hash[:12], receipt.get("status"))
-            return None
+            tx_hash = await self._send_swap(token_in, token_out, sell_amount,
+                                            source_tx=source_tx, stage="sell")
+            if not tx_hash:
+                if attempt < MAX_SELL_RETRIES:
+                    continue
+                return None
 
-        logger.info("[SELL OK] tx=%s confirmed on-chain", tx_hash[:12])
-        return tx_hash
+            receipt = await self._wait_for_receipt(tx_hash)
+            if receipt is None:
+                logger.warning("[SELL] tx=%s: receipt not found after 15s", tx_hash[:12])
+                self.last_skip_reason = "卖出交易未上链"
+                return None
+
+            if receipt.get("status") != 1:
+                logger.warning("[SELL FAIL] tx=%s on-chain（attempt %d/%d）",
+                               tx_hash[:12], attempt + 1, MAX_SELL_RETRIES + 1)
+                continue
+
+            logger.info("[SELL OK] tx=%s confirmed on-chain", tx_hash[:12])
+            return tx_hash
+
+        self.last_skip_reason = f"重试 {MAX_SELL_RETRIES} 次均失败"
+        return None
 
     # ── 内部辅助 ─────────────────────────────────────────────────
 

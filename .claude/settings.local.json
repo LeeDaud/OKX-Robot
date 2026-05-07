@@ -42,7 +42,8 @@
       "Bash(scp -i \"C:\\\\Users\\\\10159\\\\.ssh\\\\id_ed25519\" \"C:\\\\Users\\\\10159\\\\AppData\\\\Local\\\\Temp\\\\get_abi.py\" root@66.63.173.143:/tmp/)",
       "Bash(scp -i \"C:\\\\Users\\\\10159\\\\.ssh\\\\id_ed25519\" \"C:\\\\Users\\\\10159\\\\AppData\\\\Local\\\\Temp\\\\synfutures_research.py\" root@66.63.173.143:/tmp/)",
       "Bash(scp -i \"C:\\\\Users\\\\10159\\\\.ssh\\\\id_ed25519\" \"C:\\\\Users\\\\10159\\\\AppData\\\\Local\\\\Temp\\\\read_abis.py\" root@66.63.173.143:/tmp/)",
-      "Bash(echo \"EXIT:$?\")"
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(scp -P 22 -i /c/Users/10159/.ssh/id_ed25519 -o StrictHostKeyChecking=no /tmp/fix_grid_config.py root@66.63.173.143:/tmp/fix_grid_config.py)"
     ]
   }
 }

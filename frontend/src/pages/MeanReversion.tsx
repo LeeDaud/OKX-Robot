@@ -76,7 +76,6 @@ function PositionCard({ symbol }: { symbol: MrSymbolState }) {
   if (!p) return null;
 
   const hasStop = p.pnl_pct <= -((symbol.indicators.atr || 1) / (p.entry_price || 1) * 100);
-  const hasTP1 = p.pnl_pct >= (symbol.indicators.atr || 0) / (p.entry_price || 1) * 1.5 * 100;
 
   return (
     <Card>
@@ -153,10 +152,6 @@ function IndicatorGrid({ symbol }: { symbol: MrSymbolState }) {
   const ind = symbol.indicators;
   if (!ind || !Object.keys(ind).length) return null;
 
-  // 趋势方向指示器
-  const TrendIcon = ind.sma_200_direction === "up" ? TrendingUp : TrendingDown;
-  const trendColor = ind.sma_200_direction === "up" ? "text-[var(--success)]" : "text-[var(--danger)]";
-
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <MetricCard label="RSI(14)" value={ind.rsi.toFixed(1)} hint={ind.rsi < 40 ? "超卖区 ✓" : "正常区间"} tone={ind.rsi < 40 ? "success" : "default"} />
@@ -165,12 +160,7 @@ function IndicatorGrid({ symbol }: { symbol: MrSymbolState }) {
       <MetricCard
         label="200MA"
         value={`$${formatPrice(ind.sma_200)}`}
-        hint={
-          <span className={cn("inline-flex items-center gap-1", trendColor)}>
-            <TrendIcon className="size-3" />
-            {ind.sma_200_direction === "up" ? "向上" : "向下"}
-          </span>
-        }
+        hint={ind.sma_200_direction === "up" ? "↑ 向上" : "↓ 向下"}
         tone={ind.sma_200_direction === "up" ? "success" : "danger"}
       />
       <MetricCard label="MACD 线" value={ind.macd_line.toFixed(4)} hint={`信号 ${ind.macd_signal.toFixed(4)}`} />
@@ -209,9 +199,9 @@ export default function MeanReversion() {
       {/* ── 状态栏 ── */}
       <section className="flex flex-wrap gap-4">
         <StatusBadge ok={!hasPaused} label="策略状态" hint={hasPaused ? "暂停中" : "运行中"} />
-        <StatusBadge ok={state.consecutive_losses < state.config?.consecutive_loss_pause} label="连续亏损" hint={`${state.consecutive_losses}/${state.config?.consecutive_loss_pause || 3}`} />
-        <StatusBadge ok={state.daily_open_count < (state.config?.max_daily_open as number || 2)} label="今日开仓" hint={`${state.daily_open_count}/${state.config?.max_daily_open || 2}`} />
-        <StatusBadge ok={totalPositions < (state.config?.max_positions as number || 6)} label="当前持仓" hint={`${totalPositions}/${state.config?.max_positions || 6}`} />
+        <StatusBadge ok={state.consecutive_losses < Number(state.config?.consecutive_loss_pause ?? 3)} label="连续亏损" hint={`${state.consecutive_losses}/${state.config?.consecutive_loss_pause ?? 3}`} />
+        <StatusBadge ok={state.daily_open_count < Number(state.config?.max_daily_open ?? 2)} label="今日开仓" hint={`${state.daily_open_count}/${state.config?.max_daily_open ?? 2}`} />
+        <StatusBadge ok={totalPositions < Number(state.config?.max_positions ?? 6)} label="当前持仓" hint={`${totalPositions}/${state.config?.max_positions ?? 6}`} />
       </section>
 
       {/* ── 持仓面板 ── */}

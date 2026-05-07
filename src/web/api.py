@@ -947,17 +947,113 @@ async def handle_aero_state(_request):
 
 async def handle_mean_reversion_state(_request):
     """GET /api/mean-reversion/state - 均值回归策略状态"""
+    from src.config.loader import load_config
+
+    cfg = load_config()
+    mr_cfg = cfg.mean_reversion
+
     state = _read_state()
     mr_state = state.get("mean_reversion_state", {}) or {}
+    positions = mr_state.get("positions", {})
+    last_indicators = mr_state.get("last_indicators", {})
+    last_prices = mr_state.get("last_prices", {})
+
+    now = datetime.now(timezone.utc)
+    symbols = []
+    for token_cfg in mr_cfg.tokens:
+        pos_data = positions.get(token_cfg.symbol)
+        indicators = last_indicators.get(token_cfg.symbol, {})
+        entry_conditions = _compute_mr_entry_conditions(indicators)
+
+        symbol_state: dict = {
+            "symbol": token_cfg.symbol,
+            "has_position": pos_data is not None,
+            "indicators": indicators,
+            "entry_conditions": entry_conditions,
+            "signal_strength": pos_data.get("entry_signal", "") if pos_data else "",
+        }
+
+        if pos_data:
+            current_price = last_prices.get(token_cfg.symbol, pos_data.get("entry_price", 0))
+            try:
+                entry_dt = datetime.fromisoformat(pos_data["entry_time"])
+                holding_hours = (now - entry_dt).total_seconds() / 3600
+            except (ValueError, TypeError, KeyError):
+                holding_hours = 0
+            pnl_pct = (current_price - pos_data["entry_price"]) / pos_data["entry_price"] if pos_data.get("entry_price", 0) > 0 else 0
+
+            symbol_state["position"] = {
+                "symbol": pos_data["symbol"],
+                "token_address": pos_data.get("token_address", ""),
+                "entry_price": pos_data["entry_price"],
+                "amount": pos_data.get("amount", 0),
+                "cost_basis_usdc": pos_data.get("cost_basis_usdc", 0),
+                "current_price": current_price,
+                "position_value_usdc": pos_data.get("amount", 0) * current_price,
+                "pnl_pct": round(pnl_pct * 100, 2),
+                "holding_hours": round(holding_hours, 1),
+                "entry_signal": pos_data.get("entry_signal", ""),
+                "tp1_done": pos_data.get("tp1_done", False),
+                "tp2_done": pos_data.get("tp2_done", False),
+                "trailing_stop_active": pos_data.get("trailing_stop_active", False),
+                "entry_time": pos_data.get("entry_time", ""),
+                "buy_tx_hash": pos_data.get("buy_tx_hash", ""),
+            }
+
+        symbols.append(symbol_state)
+
     return json_ok({
-        "enabled": mr_state.get("enabled", False),
-        "symbols": mr_state.get("symbols", []),
+        "enabled": mr_cfg.enabled,
+        "symbols": symbols,
         "consecutive_losses": mr_state.get("consecutive_losses", 0),
         "paused_until": mr_state.get("paused_until"),
         "daily_open_count": mr_state.get("daily_open_count", 0),
         "daily_open_date": mr_state.get("daily_open_date", ""),
-        "config": mr_state.get("config", {}),
+        "config": {
+            "position_size_strong": mr_cfg.position_size_strong,
+            "position_size_medium": mr_cfg.position_size_medium,
+            "atr_period": mr_cfg.atr_period,
+            "atr_tp1_mult": mr_cfg.atr_tp1_mult,
+            "atr_tp2_mult": mr_cfg.atr_tp2_mult,
+            "atr_stop_mult": mr_cfg.atr_stop_mult,
+            "atr_trail_mult": mr_cfg.atr_trail_mult,
+            "max_positions": mr_cfg.max_positions,
+            "max_daily_open": mr_cfg.max_daily_open,
+            "time_stop_hours": mr_cfg.time_stop_hours,
+            "force_close_hours": mr_cfg.force_close_hours,
+            "consecutive_loss_pause": mr_cfg.consecutive_loss_pause,
+            "daily_loss_pct_limit": mr_cfg.daily_loss_pct_limit,
+            "black_swan_drop_pct": mr_cfg.black_swan_drop_pct,
+            "pause_hours": mr_cfg.pause_hours,
+        },
     })
+
+
+def _compute_mr_entry_conditions(indicators: dict) -> list[dict]:
+    """计算均值回归入场条件达标状态。"""
+    price_percentile = indicators.get("price_percentile_90d", 50)
+    rsi = indicators.get("rsi", 50)
+
+    return [
+        {
+            "label": "90天价格百分位 ≤ 30%",
+            "ok": price_percentile <= 30,
+            "current": price_percentile,
+            "threshold": "≤ 30%",
+        },
+        {
+            "label": "RSI(14) < 40",
+            "ok": rsi < 40,
+            "current": rsi,
+            "threshold": "< 40",
+        },
+        {
+            "label": "MACD 日线金叉",
+            "ok": indicators.get("macd_golden_cross", False),
+            "current": indicators.get("macd_golden_cross", False),
+            "threshold": "已金叉",
+        },
+    ]
 
 
 def _compute_aero_conditions(snap: dict, cfg: dict) -> dict:

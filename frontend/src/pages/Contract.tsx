@@ -4,7 +4,7 @@ import type { ContractState, ContractPosition } from "@/types/api";
 import { PageHeader, MetricCard, SectionCard, StatusBadge, LoadingState, EmptyState } from "@/components/app-primitives";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { TrendingUp, Wallet, Banknote, ArrowRightLeft } from "lucide-react";
+import { Wallet, Banknote, ArrowRightLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function formatUsd(v: number): string {

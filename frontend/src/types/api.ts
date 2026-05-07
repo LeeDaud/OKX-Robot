@@ -32,6 +32,7 @@ export interface AppConfig {
   wallet?: WalletConfig
   copy_trading?: CopyTradingConfig
   grid?: GridConfigInfo
+  contract?: ContractConfigInfo
 }
 
 export interface WalletConfig {
@@ -294,6 +295,10 @@ export interface GridHistoryResponse {
 }
 
 // ── 合约交易类型 ─────────────────────────────────────
+
+export interface ContractConfigInfo {
+  enabled: boolean
+}
 
 export interface ContractPosition {
   pair: string

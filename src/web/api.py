@@ -108,7 +108,9 @@ async def handle_grid_state(request: web.Request) -> web.Response:
     if current_price is None:
         current_price = stored_price or 0.0
 
-    grid_config = request.app.get("grid_cfg", {})
+    grid_cfg = _load_grid_cfg()
+    grid_enabled = grid_cfg.get("enabled", False)
+    grid_vol_adjust = grid_cfg.get("volatility_adjust", False)
 
     slots = []
     active = 0
@@ -143,7 +145,7 @@ async def handle_grid_state(request: web.Request) -> web.Response:
     realized_pnl = await _get_realized_pnl()
 
     return json_ok({
-        "enabled": grid_config.get("enabled", False),
+        "enabled": grid_enabled,
         "token": grid_config.get("token", ""),
         "token_symbol": "AERO",
         "current_price": round(current_price, 8) if current_price else None,
@@ -153,7 +155,7 @@ async def handle_grid_state(request: web.Request) -> web.Response:
         "realized_pnl": round(realized_pnl, 4),
         "unrealized_pnl": round(unrealized_pnl, 4),
         "total_pnl": round(realized_pnl + unrealized_pnl, 4),
-        "volatility_adjust": _load_grid_cfg().get("volatility_adjust", False),
+        "volatility_adjust": grid_vol_adjust,
         "slots": slots,
         "updated_at": state.get("_updated_at", ""),
     })
@@ -255,6 +257,9 @@ async def handle_config(_request):
             "targets": cfg["copy_targets"],
         },
         "grid": grid_raw,
+        "contract": {
+            "enabled": bool((raw_cfg.get("contract", {}) or {}).get("enabled", False)),
+        },
     })
 
 
@@ -465,6 +470,13 @@ async def handle_toggle_execution(request: web.Request):
             cfg["mean_reversion"] = {}
         cfg["mean_reversion"]["enabled"] = bool(data["mean_reversion_enabled"])
         updated.append("mean_reversion_enabled")
+
+    # 切换 contract.enabled
+    if "contract_enabled" in data:
+        if "contract" not in cfg:
+            cfg["contract"] = {}
+        cfg["contract"]["enabled"] = bool(data["contract_enabled"])
+        updated.append("contract_enabled")
 
     # 切换 dry_run
     if "dry_run" in data:
@@ -812,7 +824,9 @@ def _load_full_config() -> dict:
         "has_okx_api_key": bool(os.environ.get("OKX_API_KEY", "")),
         "feishu_webhook_url": str(raw.get("feishu_webhook_url", "")),
         "copy_targets": targets_raw,
+        "copy_trading_enabled": bool(copy_raw.get("enabled", False)),
         "grid_enabled": bool(grid_raw.get("enabled", False)),
+        "contract_enabled": bool((raw.get("contract", {}) or {}).get("enabled", False)),
         "grid_token": str(grid_raw.get("token", "")),
         "grid_levels": int(grid_raw.get("levels", 6)),
         "grid_spread_pct": float(grid_raw.get("spread_pct", 2.0)),

@@ -70,6 +70,7 @@ export default function Dashboard() {
   const gridEnabled = gridState?.enabled ?? false;
   const gridActiveSlots = gridState?.slots?.filter((s) => s.status === "bought").length ?? 0;
   const copyEnabled = config?.copy_trading?.enabled ?? false;
+  const contractEnabled = config?.contract?.enabled ?? false;
   const isWalletReady = wallet?.has_private_key && wallet?.has_okx_api_key;
 
   return (
@@ -87,7 +88,7 @@ export default function Dashboard() {
         </div>
         <Card>
           <CardContent className="p-5">
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-4">
               <div className="flex flex-col gap-2">
                 <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">跟单交易</span>
                 <Button
@@ -112,6 +113,19 @@ export default function Dashboard() {
                 >
                   {gridEnabled ? <Power className="size-4" /> : <PowerOff className="size-4" />}
                   {gridEnabled ? "运行中" : "已停止"}
+                </Button>
+              </div>
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">合约交易</span>
+                <Button
+                  variant={contractEnabled ? "default" : "outline"}
+                  size="sm"
+                  disabled={toggleMut.isPending}
+                  onClick={() => toggleMut.mutate({ contract_enabled: !contractEnabled })}
+                  className="justify-start"
+                >
+                  {contractEnabled ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                  {contractEnabled ? "运行中" : "已停止"}
                 </Button>
               </div>
               <div className="flex flex-col gap-2">

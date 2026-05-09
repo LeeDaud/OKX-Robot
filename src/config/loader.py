@@ -160,7 +160,7 @@ class Config:
     buyback_watch: dict[str, str] = field(default_factory=dict)
     base_token: str = "VIRTUAL"
     daily_loss_limit_usd: float = 10
-    slippage: float = 0.01
+    slippage: float = 0.05
     gas_limit_gwei: float = 50
     take_profit_roi: float = 0.30
     take_profit_check_sec: float = 60
@@ -338,7 +338,7 @@ def _parse_yaml(y: dict) -> dict:
         buyback_watch={k.lower(): v.lower() for k, v in raw_buyback.items()},
         base_token=str(y.get("base_token", "VIRTUAL")).upper(),
         daily_loss_limit_usd=float(y.get("daily_loss_limit_usd", 10)),
-        slippage=float(y.get("slippage", 0.01)),
+        slippage=float(y.get("slippage", 0.05)),
         gas_limit_gwei=float(y.get("gas_limit_gwei", 50)),
         take_profit_roi=float(y.get("take_profit_roi", 0)),
         take_profit_check_sec=float(y.get("take_profit_check_sec", 60)),

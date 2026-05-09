@@ -95,7 +95,7 @@ base_token: VIRTUAL
 
 # 风控
 daily_loss_limit_usd: 10     # 每日最大亏损（USDC），超过后停止交易
-slippage: 0.01               # 最大滑点 1%
+slippage: 0.05               # 最大滑点 5%
 gas_limit_gwei: 50            # gas price 超过此值时跳过（单位 gwei）
 
 # 止盈
